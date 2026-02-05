@@ -1,0 +1,42 @@
+-- 
+-- 2025-08-05 13:41:2
+-- 
+
+1. Phone number and Email validations need to be in place.
+2. All successful/failure/informational messages should be shown at the bottom of the card, near about the following code location in the blade file.
+
+{{-- 🔽 Error message after Verify OTP --}}
+                                    <div class="text-center mt-2">
+                                        @error('otp')
+                                        <div class="text-danger">{{ $message }}</div>
+                                        @enderror
+                                    </div>
+
+3. After the OTP is sent and the button is grayed out, for the reason that I don't know, the button becomes very thin like a horizontal like for a short while before expanding to it's nomrnal size.
+Below is the code, can you fix and give me blade file for of the requested changes?
+
+<div class="mb-3 position-relative">
+                                        <button type="submit"
+                                            class="btn w-100 text-white"
+                                            :class="(otpSent && countdown > 0) ? 'bg-secondary border-0' : 'btn-primary'"
+                                            x-bind:disabled="otpSent && countdown > 0"
+                                            @click="sendingOtp = true">
+
+                                            <!-- Default state -->
+                                            <span x-show="!sendingOtp && (!otpSent || countdown === 0)">Send OTP</span>
+
+                                            <!-- Sending state -->
+                                            <span x-show="sendingOtp" class="fas fa-spinner fa-spin">
+                                                Sending OTP...
+                                            </span>
+
+                                            <!-- After successful send -->
+                                            <span x-show="otpSent && !showOtpSent && countdown > 0">OTP Sent!</span>
+
+                                        </button>
+                                    </div>
+
+
+---
+--- 2025-08-05 13:41:58
+---

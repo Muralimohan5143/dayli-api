@@ -1,0 +1,75 @@
+@php
+/** Inputs from route */
+/** @var int $step */
+/** @var string $type */
+
+$signupBg = asset('assets/img/bg/vernazza.jpg'); // change if needed
+
+// Stepper math
+$total = 3;
+$current = max(1, min((int)$step, $total));
+$labels = ['Contact Details', 'Contract Details', 'Profile Details'];
+$pct = $total > 1 ? (($current - 1) / ($total - 1)) * 100 : 0;
+@endphp
+
+{{-- HEADER (stepper with icons, no outer rails) --}}
+@include('livewire.vendor-signup.partials.header', [
+'signupBg' => $signupBg,
+'total' => $total,
+'current' => $current,
+'labels' => $labels,
+'pct' => $pct,
+])
+
+
+{{-- ===== Step 1: Embedded Login (exactly one instance) ===== --}}
+@if ($current === 1)
+<div class="container mt-3">
+  <div class="row justify-content-center">
+    <div class="col-lg-5">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          @livewire('auth.login-form', [
+          'embedded' => true, // remove hero/bg from login
+          'redirectUrl' => route('vendor.signup', ['step' => 2]) // proceed to step 2 after OTP
+          ])
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+@endif
+
+
+{{-- ===== Middle content (Steps 2 & 3) ===== --}}
+<div class="px-3 pb-3">
+  @if ($current === 2)
+  {{-- Vendor-specific contract UI --}}
+  @switch($type)
+  @case('milk_dairy') @include('vendor-signup.steps.vendor-milk') @break
+  @case('vegetables') @include('vendor-signup.steps.vendor-veg') @break
+  @case('fruits') @include('vendor-signup.steps.vendor-fruits') @break
+  @case('beverages') @include('vendor-signup.steps.vendor-beverages') @break
+  @case('bakery_snacks') @include('vendor-signup.steps.vendor-bakery_snacks') @break
+  @case('fish_seafood') @include('vendor-signup.steps.vendor-fish_seafood') @break
+  @case('meat') @include('vendor-signup.steps.vendor-meat') @break
+  @case('flowers') @include('vendor-signup.steps.vendor-flowers') @break
+  @case('groceries') @include('vendor-signup.steps.vendor-groceries') @break
+  @case('puja_samagri') @include('vendor-signup.steps.vendor-puja_samagri') @break
+  @case('chaats_quick_snacks') @include('vendor-signup.steps.vendor-chaats_quick_snacks') @break
+  @case('sweets_confectionery') @include('vendor-signup.steps.vendor-sweets_confectionery')@break
+  @case('health_packs') @include('vendor-signup.steps.vendor-health_packs') @break
+  @default
+  <div class="alert alert-warning mb-0">
+    Unknown vendor type “{{ $type }}”. Choose a supported type.
+  </div>
+  @endswitch
+
+  @elseif ($current === 3)
+  @include('livewire.vendor-signup.steps.profile')
+  @endif
+</div>
+
+
+{{-- FOOTER (Back/Continue) --}}
+@include('livewire.vendor-signup.partials.footer', ['step' => $step, 'type' => $type])

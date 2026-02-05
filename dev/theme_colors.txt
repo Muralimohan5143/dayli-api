@@ -1,0 +1,52 @@
+# 🌈 Dayli Theme Colors
+
+These are the primary brand colors for Leela & Dayli, as per astrological guidance and spiritual design direction.
+
+---
+
+## 🌾 Wheat Tones
+| Shade         | Hex     | Use Case                  |
+|---------------|---------|----------------------------|
+| Light Wheat   | #F5ECD9 | Backgrounds, cards         |
+| Medium Wheat  | #F5D3A3 | Buttons, badges            |
+| Deep Wheat    | #CBB27A | Borders, shadows           |
+
+---
+
+## 🌕 Yellow Tones
+| Shade          | Hex     | Use Case                  |
+|----------------|---------|----------------------------|
+| Soft Yellow    | #FFF7BF | Highlights, dividers       |
+| Classic Yellow | #FCD34D | CTA buttons, icons         |
+| Goldenrod      | #D9A400 | Alerts, active states      |
+
+---
+
+## 🧡 Orange Tones
+| Shade         | Hex     | Use Case                  |
+|---------------|---------|----------------------------|
+| Peach Orange  | #FFE1C6 | Light backgrounds          |
+| Dayli Orange  | #FB923C | Buttons, accent lines      |
+| Burnt Orange  | #C2410C | Titles, active nav         |
+
+---
+
+## ❤️ Red Tones
+| Shade         | Hex     | Use Case                  |
+|---------------|---------|----------------------------|
+| Light Red     | #FECACA | Error hints, warnings      |
+| Ritual Red    | #EF4444 | Primary actions, attention |
+| Deep Crimson  | #991B1B | Headers, ceremonial tones  |
+
+---
+
+## 🌺 Chitravarnam Tones (Festive Accents)
+| Shade           | Hex     | Use Case                  |
+|----------------|---------|----------------------------|
+| Turmeric Gold   | #FFD700 | Decorative elements        |
+| Pooja Pink      | #E91E63 | Celebratory highlights     |
+| Sacred Teal     | #00897B | Balance, contrast elements |
+
+---
+
+> Use these colors in Flutter `ThemeData`, Blade layout classes, print media, product tags, and email templates.

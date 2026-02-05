@@ -1,0 +1,121 @@
+image: atlassian/default-image:4
+
+pipelines:
+  branches:
+    main:
+      - step:
+          name: Deploy Laravel (releases + current symlink)
+
+          caches:
+            - composer
+
+          script:
+            - apt-get update && apt-get install -y rsync openssh-client
+
+            - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+            # Release name like 20260131-124530
+            - export REL="$(date +%Y%m%d-%H%M%S)"
+
+            # Create release folder on server
+            - ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p $BASE_PATH/releases/$REL"
+
+            # Upload code into the new release
+            - >
+              rsync -rz --delete --omit-dir-times --no-perms --no-owner --no-group
+              --exclude=".git"
+              --exclude="node_modules"
+              --exclude="vendor"
+              --exclude=".env"
+              --exclude="storage/***"
+              --exclude="bootstrap/cache/***"
+              ./ "$DEPLOY_USER@$DEPLOY_HOST:$BASE_PATH/releases/$REL/"
+
+            # Prepare release (link shared .env + storage, install vendor, cache)
+            - >
+              ssh "$DEPLOY_USER@$DEPLOY_HOST" "
+                set -e
+                cd $BASE_PATH/releases/$REL
+
+                # link shared env
+                ln -sfn $BASE_PATH/shared/.env .env
+
+                # link shared storage (runtime files must persist across releases)
+                rm -rf storage
+                ln -sfn $BASE_PATH/shared/storage storage
+
+                # ensure required writable dirs exist
+                mkdir -p storage/framework/{cache/data,sessions,views} storage/logs bootstrap/cache
+
+                composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader --no-scripts
+
+                php artisan package:discover --no-interaction --no-ansi
+
+                php artisan optimize:clear
+                php artisan config:cache
+                php artisan route:cache
+                php artisan view:cache
+              "
+
+            # Atomically switch current symlink to the new release
+            - ssh "$DEPLOY_USER@$DEPLOY_HOST" "ln -sfn $BASE_PATH/releases/$REL $BASE_PATH/current"
+
+            # Run migrations on the *current* release, then reload php-fpm
+            - >
+              ssh "$DEPLOY_USER@$DEPLOY_HOST" "
+                set -e
+                cd $BASE_PATH/current
+                sudo systemctl reload php8.3-fpm || true
+              "
+
+            # Keep only last 8 releases (adjust number as you like)
+            - >
+              ssh "$DEPLOY_USER@$DEPLOY_HOST" "
+                cd $BASE_PATH/releases
+                ls -1t | tail -n +9 | xargs -r rm -rf
+              "
+
+  custom:
+    rollback:
+      - step:
+          name: Rollback Laravel (flip current symlink)
+
+          script:
+            - apt-get update && apt-get install -y openssh-client
+
+            - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+            # Show last 20 releases in pipeline log
+            - ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $BASE_PATH/releases && ls -1t | head -20"
+
+            # Flip current -> releases/$ROLLBACK_RELEASE
+            - >
+              ssh "$DEPLOY_USER@$DEPLOY_HOST" "
+                set -e
+                if [ -z \"$ROLLBACK_RELEASE\" ]; then
+                  echo 'ROLLBACK_RELEASE is empty. Set it when running the manual pipeline.'
+                  exit 1
+                fi
+                if [ ! -d \"$BASE_PATH/releases/$ROLLBACK_RELEASE\" ]; then
+                  echo 'Release not found:' $ROLLBACK_RELEASE
+                  exit 1
+                fi
+                ln -sfn $BASE_PATH/releases/$ROLLBACK_RELEASE $BASE_PATH/current
+                sudo systemctl reload php8.3-fpm || true
+                echo 'Rolled back to:' $ROLLBACK_RELEASE
+              "
+
+    list_releases:
+      - step:
+          name: List Laravel releases
+
+          script:
+            - apt-get update && apt-get install -y openssh-client
+
+            - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+            - ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $BASE_PATH/releases && ls -1t | head -50"
+
+definitions:
+  caches:
+    composer: ~/.composer/cache

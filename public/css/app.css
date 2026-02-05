@@ -1,0 +1,98 @@
+/* ================================
+   SIDEBAR LAYOUT / SCROLL
+   ================================ */
+#sidenav-main{
+  width: 268px; /* comfy width; change if you like */
+}
+#sidenav-main .navbar-collapse{
+  display:flex;
+  flex-direction:column;
+  height:calc(100vh - 80px); /* adjust if header height differs */
+  overflow-y:auto;
+  overflow-x:hidden;
+  padding:10px 12px; /* inner breathing room */
+}
+#sidenav-main .navbar-nav{
+  gap:.8rem; /* spacing between sections */
+}
+
+/* optional overall pale bg (add class="sidebar-soft" on <aside id="sidenav-main">) */
+.sidebar-soft{ background:#fffbea !important; } /* very light yellow */
+
+/* ================================
+   COLLAPSIBLE SECTION HEADER BUTTON
+   (this is the <button class="sidebar-section-header">)
+   ================================ */
+#sidenav-main .sidebar-section-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  width:100%;
+  padding:.85rem .95rem;                 /* bigger click target */
+  border-radius:.8rem;                    /* soft corners */
+  font-size:.92rem;                       /* larger text */
+  letter-spacing:.01em;
+  text-transform:none;                    /* friendlier casing */
+  font-weight:600;
+  background:#fff8d6 !important;          /* SOFT YELLOW */
+  color:#111827;
+  border:1px solid rgba(0,0,0,.10) !important;
+  box-shadow:0 1px 2px rgba(15,23,42,.04);
+  transition:background .15s ease, border-color .15s ease, box-shadow .15s ease, transform .06s ease;
+}
+#sidenav-main .sidebar-section-header:hover{
+  background:#fff3bf !important;          /* hover yellow */
+  border-color:rgba(0,0,0,.16) !important;
+  box-shadow:0 4px 14px rgba(15,23,42,.06);
+}
+#sidenav-main .sidebar-section-header:active{
+  transform:translateY(1px);
+}
+
+/* kill any legacy styles that targeted button.nav-link */
+#sidenav-main .nav-item > div > button.nav-link{ all:unset; }
+#sidenav-main .nav-item > div > button.nav-link:hover{ all:unset; }
+
+/* when you stack section <li>s, keep them snug but not cramped */
+#sidenav-main .nav-item + .nav-item{ margin-top:.2rem; }
+
+/* chevron */
+#sidenav-main .caret{ width:16px; height:16px; transition:transform .18s ease; opacity:.75; }
+#sidenav-main .rotate-90{ transform:rotate(90deg); } /* if you use the class way */
+
+/* ================================
+   SECTION BODY (the UL rendered via the slot)
+   ================================ */
+#sidenav-main .sidebar-section-content{
+  margin-top:.65rem;
+  padding-left:.25rem;
+}
+
+/* links inside the section */
+#sidenav-main .sidebar-section-content > li .nav-link{
+  display:flex;
+  align-items:center;
+  gap:.4rem;
+  padding:.55rem .75rem;                  /* bigger row height */
+  border-radius:.65rem;
+  line-height:1.15;
+  transition:background .12s ease, box-shadow .12s ease, color .12s ease;
+}
+
+/* icon alignment */
+#sidenav-main .sidebar-section-content > li .nav-link i{
+  width:18px; text-align:center; margin-right:.1rem;
+}
+
+/* hover + active states (LIGHT ORANGE) */
+#sidenav-main .sidebar-section-content > li .nav-link:hover{
+  background:#ffe0b3 !important;          /* pastel orange on hover */
+}
+#sidenav-main .sidebar-section-content > li .nav-link.active{
+  background:#ffd9b3 !important;          /* ACTIVE = light orange */
+  color:#663300 !important;               /* readable text on orange */
+  box-shadow:0 8px 20px rgba(17,24,39,.06);
+}
+
+/* misc cleanup */
+#sidenav-main .nav-item ul{ margin-bottom:0; }

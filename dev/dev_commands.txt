@@ -1,0 +1,180 @@
+# 🛠️ Developer Commands for Dayli Project
+
+This document contains commonly used developer commands categorized by technology.
+
+---
+
+## 🐙 Git Commands
+```bash
+# Clone repository
+git clone git@github.com:your-org/dayli.git
+
+# Check status
+git status
+
+# Create and switch to new branch
+git checkout -b feature/new-ui
+
+# Push code to origin
+git push origin feature/new-ui
+
+# Pull latest changes
+git pull origin main
+
+# Kdiff3 as command
+git config --global merge.tool kdiff3
+git config --global mergetool.kdiff3.path "C:/Program Files/KDiff3/kdiff3.exe"
+git config --global mergetool.kdiff3.trustExitCode false
+
+git config --global diff.tool kdiff3
+git config --global difftool.kdiff3.path "C:/Program Files/KDiff3/kdiff3.exe" --replace-all
+git config --global difftool.kdiff3.trustExitCode false
+
+
+```
+
+
+---
+
+
+for clear compiled views & cache:
+php artisan view:clear
+php artisan cache:clear
+composer dump-clear
+
+## 🧱 Laravel / PHP Artisan
+```bash
+# Migrate fresh with seeding
+php artisan migrate:fresh --seed
+
+# Serve Laravel backend
+php artisan serve
+
+# Run tests
+php artisan test
+
+# Generate model with migration and controller
+php artisan make:model Models/Product -mcr
+
+# Seed address table
+php artisan db:seed --class=AddressSeeder
+
+# Clear caches;
+php artisan cache:clear;php artisan view:clear;php artisn optimize:clear;php artisan route:clear; php artisan config:clear; php artisan config:cache
+
+
+# Dayli - set zone=1 for products.
+ php artisan dayli:bootstrap-zone-products --zones=1
+
+
+php artisan shopify:pull-products
+
+
+```
+
+
+---
+
+## 🐬 MySQL / DB
+```bash
+# Login to MySQL
+mysql -u root -p
+
+# Import SQL dump
+mysql -u root -p dayli_db < delivery_actuals.sql
+
+# List databases
+SHOW DATABASES;
+```
+
+---
+
+## 📱 Flutter Commands
+```bash
+# Create a new Flutter app
+flutter create dayli
+
+# Run app on device
+flutter run
+
+# Get dependencies
+flutter pub get
+
+# Build for release
+flutter build apk --release
+
+# Format code
+flutter format .
+```
+
+---
+
+> Keep this file updated to help all contributors move fast and consistently.
+
+# Giving a user admin role. 
+
+php artisan tinker
+
+use App\Models\User;
+use Spatie\Permission\Models\Role;
+
+$u = User::where('phone','1234567890')->firstOrFail();
+
+// create role if missing (guard must match, usually 'web')
+Role::findOrCreate('admin','web');
+
+// assign it
+$u->assignRole('admin');
+
+# for create delivery_tasks row and server side also;
+use Illuminate\Support\Facades\DB;
+
+DB::table('delivery_tasks')->insert([
+    'delivery_task'          => 'Milk delivery',
+    'delivery_exec_id'=> 10915,
+    'zone_id'        => 1,
+    'subscription_type_id'     => 3,
+    'status'       => 'today',          // same as your row
+    'start_date'      => '2026-01-30',
+
+ 
+    'created_at'     => now(),
+    'updated_at'     => now(),
+]);
+
+
+for windows
+php artisan serve --host=localhost --port=8000
+flutter run -d chrome --dart-define=API_BASE=http://localhost:8000/api
+
+
+
+link for run any where 
+php artisan serve --host=localhost --port=8000
+flutter run -d web-server --web-hostname=0.0.0.0 --web-port=8001
+    
+
+# for build apk in mobile 
+flutter build apk --debug  --dart-define=API_BASE=https://api.dayli.in/api 
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+
+
+for mobile 
+php artisan serve --host=0.0.0.0 --port=8000
+flutter run --dart-define=API_BASE=http://192.168.1.14:8000/api
+
+# query for download apk in mobile 
+flutter build apk --debug --dart-define=API_BASE=https://api.dayli.in/api
+
+Connect your phone via USB
+Enable Developer Mode
+Enable USB Debugging
+connect 
+Allow permissions
+
+adb devices
+
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+
+#query for run app in mobile with flutter side
+flutter run -d 10BE5504BE0007E --dart-define=API_BASE=https://api.dayli.in/api
