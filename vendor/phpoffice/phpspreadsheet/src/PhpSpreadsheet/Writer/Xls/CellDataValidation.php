@@ -47,20 +47,32 @@ class CellDataValidation
     {
         $validationType = $dataValidation->getType();
 
-        return self::$validationTypeMap[$validationType] ?? self::$validationTypeMap[DataValidation::TYPE_NONE];
+        if (array_key_exists($validationType, self::$validationTypeMap)) {
+            return self::$validationTypeMap[$validationType];
+        }
+
+        return self::$validationTypeMap[DataValidation::TYPE_NONE];
     }
 
     public static function errorStyle(DataValidation $dataValidation): int
     {
         $errorStyle = $dataValidation->getErrorStyle();
 
-        return self::$errorStyleMap[$errorStyle] ?? self::$errorStyleMap[DataValidation::STYLE_STOP];
+        if (array_key_exists($errorStyle, self::$errorStyleMap)) {
+            return self::$errorStyleMap[$errorStyle];
+        }
+
+        return self::$errorStyleMap[DataValidation::STYLE_STOP];
     }
 
     public static function operator(DataValidation $dataValidation): int
     {
         $operator = $dataValidation->getOperator();
 
-        return self::$operatorMap[$operator] ?? self::$operatorMap[DataValidation::OPERATOR_BETWEEN];
+        if (array_key_exists($operator, self::$operatorMap)) {
+            return self::$operatorMap[$operator];
+        }
+
+        return self::$operatorMap[DataValidation::OPERATOR_BETWEEN];
     }
 }

@@ -4,9 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Spatie\Activitylog\Traits\LogsActivity;
+use Spatie\Activitylog\LogOptions;
 
 class OrderItem extends Model
 {
+    use LogsActivity;
     protected $table = 'order_items';
 
     protected $fillable = [
@@ -20,6 +23,7 @@ class OrderItem extends Model
         'quantity',
         'unit_price',
         'line_total',
+        'actuals_date',
         'product_url',
         'image_url',
         'meta',
@@ -34,5 +38,13 @@ class OrderItem extends Model
     public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class, 'order_id');
+    }
+
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logOnly(['quantity', 'unit_price', 'line_total'])
+            ->logOnlyDirty()
+            ->useLogName('order_item');
     }
 }

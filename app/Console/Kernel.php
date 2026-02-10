@@ -5,6 +5,7 @@ namespace App\Console;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
 
+
 class Kernel extends ConsoleKernel
 {
     /**
@@ -15,6 +16,7 @@ class Kernel extends ConsoleKernel
     protected $commands = [
         \App\Console\Commands\SyncDayliShopifyCustomers::class,
         \App\Console\Commands\ImportMilkCsv::class,
+        \App\Console\Commands\GenerateDailyOrders::class, // ✅ ADD THIS
     ];
     /**
      * Define the application's command schedule.
@@ -31,6 +33,10 @@ class Kernel extends ConsoleKernel
             $schedule->command('migrate:fresh --seed')->cron($scheduledInterval);
             $schedule->command('image:seed')->cron($scheduledInterval);
         }
+        // ✅ Production: auto-create daily pending orders at 5:00 AM
+        $schedule->command('dayli:generate-daily-orders')
+            ->dailyAt('05:00')
+            ->withoutOverlapping();
     }
 
     /**
@@ -44,6 +50,8 @@ class Kernel extends ConsoleKernel
 
         require base_path('routes/console.php');
     }
+
+
 
     // protected $commands = [
     //     \App\Console\Commands\MigrateUserAddresses::class,

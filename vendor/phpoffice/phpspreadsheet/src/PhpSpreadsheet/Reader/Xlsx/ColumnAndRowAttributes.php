@@ -50,40 +50,32 @@ class ColumnAndRowAttributes extends BaseParserClass
      * Set Worksheet row attributes by attributes array passed.
      *
      * @param int $rowNumber 1, 2, 3, ... 99, ...
-     * @param array{xfIndex?: int, visible?: bool, collapsed?: bool, collapsed?: bool, outlineLevel?: int, rowHeight?: float, customFormat?: bool, ht?: float} $rowAttributes array of attributes (indexes are attribute name, values are value)
+     * @param array{xfIndex?: int, visible?: bool, collapsed?: bool, collapsed?: bool, outlineLevel?: int, rowHeight?: float} $rowAttributes array of attributes (indexes are attribute name, values are value)
      *                               'xfIndex', 'visible', 'collapsed', 'outlineLevel', 'rowHeight', ... ?
      */
     private function setRowAttributes(int $rowNumber, array $rowAttributes): void
     {
         if (isset($rowAttributes['xfIndex'])) {
-            $this->worksheet->getRowDimension($rowNumber)
-                ->setXfIndex($rowAttributes['xfIndex']);
+            $this->worksheet->getRowDimension($rowNumber)->setXfIndex($rowAttributes['xfIndex']);
         }
         if (isset($rowAttributes['visible'])) {
-            $this->worksheet->getRowDimension($rowNumber)
-                ->setVisible($rowAttributes['visible']);
+            $this->worksheet->getRowDimension($rowNumber)->setVisible($rowAttributes['visible']);
         }
         if (isset($rowAttributes['collapsed'])) {
-            $this->worksheet->getRowDimension($rowNumber)
-                ->setCollapsed($rowAttributes['collapsed']);
+            $this->worksheet->getRowDimension($rowNumber)->setCollapsed($rowAttributes['collapsed']);
         }
         if (isset($rowAttributes['outlineLevel'])) {
-            $this->worksheet->getRowDimension($rowNumber)
-                ->setOutlineLevel($rowAttributes['outlineLevel']);
+            $this->worksheet->getRowDimension($rowNumber)->setOutlineLevel($rowAttributes['outlineLevel']);
         }
-        if (isset($rowAttributes['customFormat'], $rowAttributes['rowHeight'])) {
-            $this->worksheet->getRowDimension($rowNumber)
-                ->setCustomFormat($rowAttributes['customFormat'], $rowAttributes['rowHeight']);
-        } elseif (isset($rowAttributes['rowHeight'])) {
-            $this->worksheet->getRowDimension($rowNumber)
-                ->setRowHeight($rowAttributes['rowHeight']);
+        if (isset($rowAttributes['rowHeight'])) {
+            $this->worksheet->getRowDimension($rowNumber)->setRowHeight($rowAttributes['rowHeight']);
         }
     }
 
-    public function load(?IReadFilter $readFilter = null, bool $readDataOnly = false, bool $ignoreRowsWithNoCells = false): bool
+    public function load(?IReadFilter $readFilter = null, bool $readDataOnly = false, bool $ignoreRowsWithNoCells = false): void
     {
         if ($this->worksheetXml === null) {
-            return false;
+            return;
         }
         if ($readFilter !== null && $readFilter::class === DefaultReadFilter::class) {
             $readFilter = null;
@@ -127,8 +119,6 @@ class ColumnAndRowAttributes extends BaseParserClass
                 }
             }
         }
-
-        return true;
     }
 
     /** @param mixed[] $rowsAttributes */
@@ -213,25 +203,20 @@ class ColumnAndRowAttributes extends BaseParserClass
             $row = $rowx->attributes();
             if ($row !== null && (!$ignoreRowsWithNoCells || isset($rowx->c))) {
                 $rowIndex = (int) $row['r'];
-                if (!$readDataOnly) {
-                    if (isset($row['ht'])) {
-                        $rowAttributes[$rowIndex]['rowHeight'] = (float) $row['ht'];
-                    }
-                    if (isset($row['customFormat']) && self::boolean($row['customFormat'])) {
-                        $rowAttributes[$rowIndex]['customFormat'] = true;
-                    }
-                    if (isset($row['hidden']) && self::boolean($row['hidden'])) {
-                        $rowAttributes[$rowIndex]['visible'] = false;
-                    }
-                    if (isset($row['collapsed']) && self::boolean($row['collapsed'])) {
-                        $rowAttributes[$rowIndex]['collapsed'] = true;
-                    }
-                    if (isset($row['outlineLevel']) && (int) $row['outlineLevel'] > 0) {
-                        $rowAttributes[$rowIndex]['outlineLevel'] = (int) $row['outlineLevel'];
-                    }
-                    if (isset($row['s'])) {
-                        $rowAttributes[$rowIndex]['xfIndex'] = (int) $row['s'];
-                    }
+                if (isset($row['ht']) && !$readDataOnly) {
+                    $rowAttributes[$rowIndex]['rowHeight'] = (float) $row['ht'];
+                }
+                if (isset($row['hidden']) && self::boolean($row['hidden'])) {
+                    $rowAttributes[$rowIndex]['visible'] = false;
+                }
+                if (isset($row['collapsed']) && self::boolean($row['collapsed'])) {
+                    $rowAttributes[$rowIndex]['collapsed'] = true;
+                }
+                if (isset($row['outlineLevel']) && (int) $row['outlineLevel'] > 0) {
+                    $rowAttributes[$rowIndex]['outlineLevel'] = (int) $row['outlineLevel'];
+                }
+                if (isset($row['s']) && !$readDataOnly) {
+                    $rowAttributes[$rowIndex]['xfIndex'] = (int) $row['s'];
                 }
                 if ($readFilterIsNotNull && empty($rowAttributes[$rowIndex])) {
                     $rowAttributes[$rowIndex]['exists'] = true;

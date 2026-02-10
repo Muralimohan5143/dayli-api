@@ -15,7 +15,6 @@ use PhpOffice\PhpSpreadsheet\Exception;
 use PhpOffice\PhpSpreadsheet\Shared\Date;
 use PhpOffice\PhpSpreadsheet\Worksheet\AutoFilter\Column\Rule;
 use Stringable;
-use Throwable;
 
 class AutoFilter implements Stringable
 {
@@ -216,7 +215,7 @@ class AutoFilter implements Stringable
     }
 
     /**
-     * Get a specified AutoFilter Column by its offset.
+     * Get a specified AutoFilter Column by it's offset.
      *
      * @param int $columnOffset Column offset within range (starting from 0)
      */
@@ -340,12 +339,7 @@ class AutoFilter implements Stringable
         $timeZone = new DateTimeZone('UTC');
 
         if (is_numeric($cellValue)) {
-            try {
-                $dateTime = Date::excelToDateTimeObject((float) $cellValue, $timeZone);
-            } catch (Throwable) {
-                return false;
-            }
-
+            $dateTime = Date::excelToDateTimeObject((float) $cellValue, $timeZone);
             $cellValue = (float) $cellValue;
             if ($cellValue < 1) {
                 //    Just the time part
@@ -495,12 +489,7 @@ class AutoFilter implements Stringable
         }
 
         if (is_numeric($cellValue)) {
-            try {
-                $dateObject = Date::excelToDateTimeObject((float) $cellValue, new DateTimeZone('UTC'));
-            } catch (Throwable) {
-                return false;
-            }
-
+            $dateObject = Date::excelToDateTimeObject((float) $cellValue, new DateTimeZone('UTC'));
             $dateValue = (int) $dateObject->format('m');
             if (in_array($dateValue, $monthSet)) {
                 return true;
@@ -1048,10 +1037,7 @@ class AutoFilter implements Stringable
             //    If the RowDimension object has not been allocated yet and the row should be visible,
             //    then we can avoid any operation since the rows are visible by default (saves a lot of memory)
             if ($result === false || $this->workSheet->rowDimensionExists((int) $row)) {
-                $this->workSheet
-                    ->getRowDimension((int) $row)
-                    ->setVisible($result)
-                    ->setVisibleAfterFilter($result);
+                $this->workSheet->getRowDimension((int) $row)->setVisible($result);
             }
         }
         $this->evaluated = true;
@@ -1102,7 +1088,7 @@ class AutoFilter implements Stringable
                 foreach ($value as $k => $v) {
                     $this->{$key}[$k] = clone $v; //* @phpstan-ignore-line
                     // attach the new cloned Column to this new cloned Autofilter object
-                    $this->{$key}[$k]->setParent($this); //* @phpstan-ignore-line
+                    $this->{$key}[$k]->setParent($this);
                 }
             } else {
                 $this->{$key} = $value;

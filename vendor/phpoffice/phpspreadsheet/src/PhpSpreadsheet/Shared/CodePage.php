@@ -78,7 +78,7 @@ class CodePage
      * Convert Microsoft Code Page Identifier to Code Page Name which iconv
      * and mbstring understands.
      *
-     * @param int $codePage Microsoft Code Page Identifier
+     * @param int $codePage Microsoft Code Page Indentifier
      *
      * @return string Code Page Name
      */

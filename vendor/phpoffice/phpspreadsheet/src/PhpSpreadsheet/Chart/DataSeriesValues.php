@@ -333,12 +333,16 @@ class DataSeriesValues extends Properties
      * Method for validating hex color.
      *
      * @param string $color value for color
+     *
+     * @return bool true if validation was successful
      */
-    private function validateColor(string $color): void
+    private function validateColor(string $color): bool
     {
         if (!preg_match('/^[a-f0-9]{6}$/i', $color)) {
             throw new Exception(sprintf('Invalid hex color for chart series (color: "%s")', $color));
         }
+
+        return true;
     }
 
     /**

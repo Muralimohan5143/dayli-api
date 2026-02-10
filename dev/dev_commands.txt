@@ -164,6 +164,7 @@ php artisan serve --host=0.0.0.0 --port=8000
 flutter run --dart-define=API_BASE=http://192.168.1.14:8000/api
 
 # query for download apk in mobile 
+
 flutter build apk --debug --dart-define=API_BASE=https://api.dayli.in/api
 
 Connect your phone via USB

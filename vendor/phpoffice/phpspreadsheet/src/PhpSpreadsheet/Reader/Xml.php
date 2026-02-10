@@ -510,18 +510,7 @@ class Xml extends BaseReader
                                 $cellDataFormula = AddressHelper::convertFormulaToA1($cellDataFormula, $rowID, $columnNumber);
                             }
 
-                            $hyperlink = null;
-                            if ($spreadsheet->getActiveSheet()->hyperlinkExists($columnID . $rowID)) {
-                                $hyperlink = $spreadsheet->getActiveSheet()->getHyperlink($columnID . $rowID);
-                            }
-                            $spreadsheet->getActiveSheet()
-                                ->getCell($columnID . $rowID)
-                                ->setValueExplicit(
-                                    $hasCalculatedValue ? $cellDataFormula : $cellValue,
-                                    $type
-                                );
-                            $spreadsheet->getActiveSheet()
-                                ->setHyperlink($columnID . $rowID, $hyperlink);
+                            $spreadsheet->getActiveSheet()->getCell($columnID . $rowID)->setValueExplicit((($hasCalculatedValue) ? $cellDataFormula : $cellValue), $type);
                             if ($hasCalculatedValue) {
                                 $spreadsheet->getActiveSheet()->getCell($columnID . $rowID)->setCalculatedValue($cellValue, $originalType === DataType::TYPE_NUMERIC);
                             }

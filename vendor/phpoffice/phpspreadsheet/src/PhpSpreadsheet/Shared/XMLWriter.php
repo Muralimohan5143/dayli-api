@@ -39,10 +39,6 @@ class XMLWriter extends \XMLWriter
             if (empty($this->tempFileName) || $this->openUri($this->tempFileName) === false) {
                 // Fallback to memory...
                 $this->openMemory();
-                if ($this->tempFileName != '') {
-                    @unlink($this->tempFileName);
-                }
-                $this->tempFileName = '';
             }
         }
 
@@ -64,8 +60,7 @@ class XMLWriter extends \XMLWriter
         }
     }
 
-    /** @param mixed[] $data */
-    public function __unserialize(array $data): void
+    public function __wakeup(): void
     {
         $this->tempFileName = '';
 

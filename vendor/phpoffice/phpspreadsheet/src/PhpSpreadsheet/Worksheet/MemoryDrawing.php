@@ -176,6 +176,13 @@ class MemoryDrawing extends BaseDrawing
         $temporaryFileName = File::temporaryFilename();
         file_put_contents($temporaryFileName, $imageString);
 
+        $mimeType = self::identifyMimeTypeUsingExif($temporaryFileName);
+        if ($mimeType !== null) {
+            unlink($temporaryFileName);
+
+            return $mimeType;
+        }
+
         $mimeType = self::identifyMimeTypeUsingGd($temporaryFileName);
         if ($mimeType !== null) {
             unlink($temporaryFileName);
@@ -188,12 +195,21 @@ class MemoryDrawing extends BaseDrawing
         return self::MIMETYPE_DEFAULT;
     }
 
-    /** @internal */
-    protected static string $getImageSize = 'getImageSize';
+    private static function identifyMimeTypeUsingExif(string $temporaryFileName): ?string
+    {
+        if (function_exists('exif_imagetype')) {
+            $imageType = @exif_imagetype($temporaryFileName);
+            $mimeType = ($imageType) ? image_type_to_mime_type($imageType) : null;
+
+            return self::supportedMimeTypes($mimeType);
+        }
+
+        return null;
+    }
 
     private static function identifyMimeTypeUsingGd(string $temporaryFileName): ?string
     {
-        if (function_exists(static::$getImageSize)) {
+        if (function_exists('getimagesize')) {
             $imageSize = @getimagesize($temporaryFileName);
             if (is_array($imageSize)) {
                 $mimeType = $imageSize['mime'];

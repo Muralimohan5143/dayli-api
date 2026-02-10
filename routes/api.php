@@ -70,6 +70,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/my-work/add-item-products', [MeController::class, 'getAddItemProducts']);
     Route::post('/my-work/item/update-qty', [MeController::class, 'updateItemQty']);
+    Route::post('/my-work/create-order', [MeController::class, 'createOrderFromMyWork']);
+
 
 
     Route::get('/my-work/add-item-options', [MeController::class, 'addItemOptions']);

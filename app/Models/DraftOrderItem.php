@@ -29,7 +29,7 @@ class DraftOrderItem extends Model
 
     protected $casts = [
         'qty'        => 'decimal:2',
-        'price_snapshot' => 'decimal:2',
+        'price_snapshot' => 'array',
         'start_date' => 'date',
         'end_date'   => 'date',
         'meta'       => 'array',
@@ -52,7 +52,5 @@ class DraftOrderItem extends Model
     public function variant()
     {
         return $this->belongsTo(\App\Models\Variant::class, 'variant_id', 'variant_id');
- 
     }
-    
 }

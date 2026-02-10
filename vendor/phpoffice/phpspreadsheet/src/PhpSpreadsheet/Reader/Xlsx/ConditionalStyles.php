@@ -71,11 +71,6 @@ class ConditionalStyles
             ksort($cfRules);
             // Priority is used as the key for sorting; but may not start at 0,
             // so we use array_values to reset the index after sorting.
-            $existing = $this->worksheet->getConditionalStylesCollection();
-            if (array_key_exists($conditionalRange, $existing)) {
-                $conditionalStyle = $existing[$conditionalRange];
-                $cfRules = array_merge($conditionalStyle, $cfRules);
-            }
             $this->worksheet->getStyle($conditionalRange)
                 ->setConditionalStyles(array_values($cfRules));
         }
@@ -138,7 +133,6 @@ class ConditionalStyles
         $conditionType = (string) $attributes->type;
         $operatorType = (string) $attributes->operator;
         $priority = (int) (string) $attributes->priority;
-        $stopIfTrue = (int) (string) $attributes->stopIfTrue;
 
         $operands = [];
         foreach ($cfRuleXml->children($this->ns['xm']) as $cfRuleOperandsXml) {
@@ -149,7 +143,6 @@ class ConditionalStyles
         $conditional->setConditionType($conditionType);
         $conditional->setOperatorType($operatorType);
         $conditional->setPriority($priority);
-        $conditional->setStopIfTrue($stopIfTrue === 1);
         if (
             $conditionType === Conditional::CONDITION_CONTAINSTEXT
             || $conditionType === Conditional::CONDITION_NOTCONTAINSTEXT
@@ -175,9 +168,6 @@ class ConditionalStyles
             }
             if ($styleXML->fill) {
                 $this->styleReader->readFillStyle($cfStyle->getFill(), $styleXML->fill);
-            }
-            if ($styleXML->font) {
-                $this->styleReader->readFontStyle($cfStyle->getFont(), $styleXML->font);
             }
         }
 

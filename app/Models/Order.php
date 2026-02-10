@@ -22,6 +22,10 @@ class Order extends Model
         'discount',
         'total',
         'meta',
+        'delivery_date',
+        'delivery_status',
+        'delivered_at',
+        'delivered_by',
     ];
 
     protected $casts = [
@@ -32,6 +36,8 @@ class Order extends Model
         'meta'       => 'array',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
+        'delivery_date' => 'date',
+        'delivered_at'  => 'datetime',
     ];
 
     /**

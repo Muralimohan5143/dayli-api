@@ -37,25 +37,6 @@ class Subtotal
      *
      * @return mixed[]
      */
-    protected static function filterFilteredArgs(Cell $cellReference, array $args): array
-    {
-        return array_filter(
-            $args,
-            function ($index) use ($cellReference) {
-                $explodeArray = explode('.', $index);
-                $row = $explodeArray[1] ?? '';
-
-                return is_numeric($row) ? ($cellReference->getWorksheet()->getRowDimension((int) $row)->getVisibleAfterFilter()) : true;
-            },
-            ARRAY_FILTER_USE_KEY
-        );
-    }
-
-    /**
-     * @param mixed[] $args
-     *
-     * @return mixed[]
-     */
     protected static function filterFormulaArgs(Cell $cellReference, array $args): array
     {
         return array_filter(
@@ -144,8 +125,6 @@ class Subtotal
         if ($subtotal > 100) {
             $aArgs = self::filterHiddenArgs($cellReference, $aArgs);
             $subtotal -= 100;
-        } else {
-            $aArgs = self::filterFilteredArgs($cellReference, $aArgs);
         }
 
         $aArgs = self::filterFormulaArgs($cellReference, $aArgs);

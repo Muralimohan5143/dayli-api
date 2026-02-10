@@ -150,7 +150,7 @@ class ConvertDecimal extends ConvertBase
     /**
      * toOctal.
      *
-     * Return a decimal value as octal.
+     * Return an decimal value as octal.
      *
      * Excel Function:
      *        DEC2OCT(x[,places])

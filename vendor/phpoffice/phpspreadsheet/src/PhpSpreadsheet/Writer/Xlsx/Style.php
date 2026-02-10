@@ -272,9 +272,6 @@ class Style extends WriterPart
         $objWriter->endElement();
     }
 
-    /**
-     * @param-out true $fontStarted
-     */
     private function startFont(XMLWriter $objWriter, bool &$fontStarted): void
     {
         if (!$fontStarted) {

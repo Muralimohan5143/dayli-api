@@ -3,8 +3,6 @@
 namespace PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 
 use PhpOffice\PhpSpreadsheet\Shared\Date;
-use PhpOffice\PhpSpreadsheet\Shared\StringHelper;
-use Throwable;
 
 class DateFormatter
 {
@@ -163,11 +161,7 @@ class DateFormatter
         $callback = [self::class, 'escapeQuotesCallback'];
         $format = (string) preg_replace_callback('/"(.*)"/U', $callback, $format);
 
-        try {
-            $dateObj = Date::excelToDateTimeObject($value);
-        } catch (Throwable) {
-            return StringHelper::convertToString($value);
-        }
+        $dateObj = Date::excelToDateTimeObject($value);
         // If the colon preceding minute had been quoted, as happens in
         // Excel 2003 XML formats, m will not have been changed to i above.
         // Change it now.

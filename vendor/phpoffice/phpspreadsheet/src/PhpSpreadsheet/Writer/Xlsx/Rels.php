@@ -2,7 +2,6 @@
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
-use Composer\Pcre\Preg;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx\Namespaces;
 use PhpOffice\PhpSpreadsheet\Shared\XMLWriter;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -149,26 +148,18 @@ class Rels extends WriterPart
                 Namespaces::VBA,
                 'vbaProject.bin'
             );
-            ++$i; //increment i if needed for another relation
+            ++$i; //increment i if needed for an another relation
         }
 
         // Metadata needed for Dynamic Arrays
-        if ($this->getParentWriter()->useDynamicArrays() || $spreadsheet->hasInCellDrawings()) {
+        if ($this->getParentWriter()->useDynamicArrays()) {
             $this->writeRelationShip(
                 $objWriter,
                 ($i + 1 + 3),
                 Namespaces::RELATIONSHIPS_METADATA,
                 'metadata.xml'
             );
-            ++$i; //increment i if needed for another relation
-        }
-
-        if ($spreadsheet->getActiveSheet()->getInCellDrawingCollection()->count() > 0) {
-            $i = ($i + 1 + 3);
-            $this->writeRelationship($objWriter, $i, Namespaces::RELATIONSHIPS_RICH_VALUE, 'richData/rdrichvalue.xml');
-            $this->writeRelationship($objWriter, ++$i, Namespaces::RELATIONSHIPS_RICH_VALUE_STRUCTURE, 'richData/rdrichvaluestructure.xml');
-            $this->writeRelationship($objWriter, ++$i, Namespaces::RELATIONSHIPS_RICH_VALUE_TYPES, 'richData/rdRichValueTypes.xml');
-            $this->writeRelationship($objWriter, ++$i, Namespaces::RELATIONSHIPS_RICH_VALUE_REL, 'richData/richValueRel.xml');
+            ++$i; //increment i if needed for an another relation
         }
 
         $objWriter->endElement();
@@ -228,7 +219,7 @@ class Rels extends WriterPart
             // (! synchronize with \PhpOffice\PhpSpreadsheet\Writer\Xlsx\Worksheet::writeDrawings)
             reset($drawingOriginalIds);
             $relPath = key($drawingOriginalIds);
-            if (isset($relPath, $drawingOriginalIds[$relPath])) {
+            if (isset($drawingOriginalIds[$relPath])) {
                 $rId = (int) (substr($drawingOriginalIds[$relPath], 3));
             }
 
@@ -354,12 +345,6 @@ class Rels extends WriterPart
      */
     public function writeDrawingRelationships(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $worksheet, int &$chartRef, bool $includeCharts = false): string
     {
-        // Check if we should use pass-through relationships
-        $passThroughRels = $this->getPassThroughDrawingRelationships($worksheet);
-        if ($passThroughRels !== null) {
-            return $passThroughRels;
-        }
-
         // Create XML writer
         $objWriter = null;
         if ($this->getParentWriter()->getUseDiskCaching()) {
@@ -532,30 +517,10 @@ class Rels extends WriterPart
             $objWriter,
             $i,
             Namespaces::HYPERLINK,
-            Preg::replace('~^sheet://~', '#', $drawing->getHyperlink()->getUrl()),
+            $drawing->getHyperlink()->getUrl(),
             $drawing->getHyperlink()->getTypeHyperlink()
         );
 
         return $i;
-    }
-
-    /**
-     * Get pass-through drawing relationships XML if available.
-     *
-     * Note: When pass-through is used, the original relationships are returned as-is.
-     * This means any drawings (images, charts, shapes) added programmatically after
-     * loading will not be included in the relationships. This is a known limitation
-     * when combining pass-through with drawing modifications.
-     */
-    private function getPassThroughDrawingRelationships(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $worksheet): ?string
-    {
-        /** @var array<string, array<string, mixed>> $sheets */
-        $sheets = $worksheet->getParentOrThrow()->getUnparsedLoadedData()['sheets'] ?? [];
-        $sheetData = $sheets[$worksheet->getCodeName()] ?? [];
-        if (($sheetData['drawingPassThroughEnabled'] ?? false) !== true || !is_string($sheetData['drawingRelationships'] ?? null)) {
-            return null;
-        }
-
-        return $sheetData['drawingRelationships'];
     }
 }

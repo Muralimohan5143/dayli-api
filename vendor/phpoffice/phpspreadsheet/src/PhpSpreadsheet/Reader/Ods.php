@@ -187,31 +187,28 @@ class Ods extends BaseReader
                 ];
 
                 // Loop through each child node of the table:table element reading
-                $currRow = 0;
+                $currCells = 0;
                 do {
                     $xml->read();
                     if ($xml->name == 'table:table-row' && $xml->nodeType == XMLReader::ELEMENT) {
                         $rowspan = $xml->getAttribute('table:number-rows-repeated');
                         $rowspan = empty($rowspan) ? 1 : (int) $rowspan;
-                        $currRow += $rowspan;
-                        $currCol = 0;
+                        $tmpInfo['totalRows'] += $rowspan;
+                        $tmpInfo['totalColumns'] = max($tmpInfo['totalColumns'], $currCells);
+                        $currCells = 0;
                         // Step into the row
                         $xml->read();
                         do {
                             $doread = true;
                             if ($xml->name == 'table:table-cell' && $xml->nodeType == XMLReader::ELEMENT) {
-                                $mergeSize = $xml->getAttribute('table:number-columns-repeated');
-                                $mergeSize = empty($mergeSize) ? 1 : (int) $mergeSize;
-                                $currCol += $mergeSize;
                                 if (!$xml->isEmptyElement) {
-                                    $tmpInfo['totalColumns'] = max($tmpInfo['totalColumns'], $currCol);
-                                    $tmpInfo['totalRows'] = $currRow;
+                                    ++$currCells;
                                     $xml->next();
                                     $doread = false;
                                 }
                             } elseif ($xml->name == 'table:covered-table-cell' && $xml->nodeType == XMLReader::ELEMENT) {
                                 $mergeSize = $xml->getAttribute('table:number-columns-repeated');
-                                $currCol += (int) $mergeSize;
+                                $currCells += (int) $mergeSize;
                             }
                             if ($doread) {
                                 $xml->read();
@@ -220,6 +217,7 @@ class Ods extends BaseReader
                     }
                 } while ($xml->name != 'table:table');
 
+                $tmpInfo['totalColumns'] = max($tmpInfo['totalColumns'], $currCells);
                 $tmpInfo['lastColumnIndex'] = $tmpInfo['totalColumns'] - 1;
                 $tmpInfo['lastColumnLetter'] = Coordinate::stringFromColumnIndex($tmpInfo['lastColumnIndex'] + 1);
                 $worksheetInfo[] = $tmpInfo;

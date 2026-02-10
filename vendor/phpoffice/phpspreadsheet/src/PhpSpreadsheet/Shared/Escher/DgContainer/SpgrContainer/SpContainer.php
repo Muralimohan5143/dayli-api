@@ -165,7 +165,11 @@ class SpContainer
      */
     public function getOPT(int $property): mixed
     {
-        return $this->OPT[$property] ?? null;
+        if (isset($this->OPT[$property])) {
+            return $this->OPT[$property];
+        }
+
+        return null;
     }
 
     /**

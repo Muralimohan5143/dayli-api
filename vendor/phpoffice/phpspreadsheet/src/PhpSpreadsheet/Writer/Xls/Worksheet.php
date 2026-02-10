@@ -211,14 +211,15 @@ class Worksheet extends BIFFwriter
         $maxC = $this->phpSheet->getHighestColumn();
 
         // Determine lowest and highest column and row
-        // BIFF8 DIMENSIONS record requires 0-based indices for both rows and columns
-        // Row methods return 1-based values (Excel UI), so subtract 1 to convert to 0-based
-        $this->firstRowIndex = $minR - 1;
-        $this->lastRowIndex = ($maxR > 65536) ? 65535 : ($maxR - 1);
+        $this->firstRowIndex = $minR;
+        $this->lastRowIndex = ($maxR > 65535) ? 65535 : $maxR;
 
-        // Column methods return 1-based values (columnIndexFromString('A') = 1), so subtract 1
-        $this->firstColumnIndex = Coordinate::columnIndexFromString($minC) - 1;
-        $this->lastColumnIndex = min(255, Coordinate::columnIndexFromString($maxC) - 1);
+        $this->firstColumnIndex = Coordinate::columnIndexFromString($minC);
+        $this->lastColumnIndex = Coordinate::columnIndexFromString($maxC);
+
+        if ($this->lastColumnIndex > 255) {
+            $this->lastColumnIndex = 255;
+        }
         $this->writerWorkbook = $writerWorkbook;
     }
 
@@ -257,8 +258,7 @@ class Worksheet extends BIFFwriter
         }
 
         $columnDimensions = $phpSheet->getColumnDimensions();
-        // lastColumnIndex is now 0-based, so no need to subtract 1
-        $maxCol = $this->lastColumnIndex;
+        $maxCol = $this->lastColumnIndex - 1;
         for ($i = 0; $i <= $maxCol; ++$i) {
             $hidden = 0;
             $level = 0;
@@ -282,7 +282,7 @@ class Worksheet extends BIFFwriter
             // $lastcol  last column on the range
             // $width    width to set
             // $xfIndex  The optional cell style Xf index to apply to the columns
-            // $hidden   The optional hidden attribute
+            // $hidden   The optional hidden atribute
             // $level    The optional outline level
             $this->columnInfo[] = [$i, $i, $width, $xfIndex, $hidden, $level];
         }
@@ -369,9 +369,6 @@ class Worksheet extends BIFFwriter
             $xfIndex = $cell->getXfIndex() + 15; // there are 15 cell style Xfs
 
             $cVal = $cell->getValue();
-            if ($cVal instanceof RichText && (string) $cVal === '') {
-                $cVal = '';
-            }
             if ($cVal instanceof RichText) {
                 $arrcRun = [];
                 $str_pos = 0;
@@ -2319,7 +2316,7 @@ class Worksheet extends BIFFwriter
     }
 
     /**
-     * Store the OBJ record that precedes an IMDATA record. This could be generalised
+     * Store the OBJ record that precedes an IMDATA record. This could be generalise
      * to support other Excel objects.
      *
      * @param int $colL Column containing upper left corner of object
