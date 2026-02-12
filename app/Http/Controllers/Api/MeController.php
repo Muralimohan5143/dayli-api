@@ -34,6 +34,12 @@ class MeController extends Controller
         // ✅ SYNC: fill scr.zone_id from customer users.zone_id (only where missing)
         DB::table('sub_change_requests as scr')
             ->join('users as u', 'u.id', '=', 'scr.for_user_id')
+            ->join('model_has_roles as mhr', function ($join) {
+                $join->on('mhr.model_id', '=', 'u.id')
+                    ->where('mhr.model_type', \App\Models\User::class);
+            })
+            ->join('roles as r', 'r.id', '=', 'mhr.role_id')
+            ->where('r.name', 'customer')      // ✅ only customers
             ->whereNull('scr.zone_id')
             ->whereNotNull('u.zone_id')
             ->update(['scr.zone_id' => DB::raw('u.zone_id')]);
@@ -155,6 +161,15 @@ class MeController extends Controller
             ->join('draft_orders as do', 'do.id', '=', 'doi.draft_order_id')
             ->join('sub_change_requests as scr', 'scr.id', '=', 'do.change_request_id')
             ->join('users as u', 'u.id', '=', 'scr.for_user_id')
+
+            // ✅ ONLY CUSTOMERS (role filter)
+            ->join('model_has_roles as mhr', function ($join) {
+                $join->on('mhr.model_id', '=', 'u.id')
+                    ->where('mhr.model_type', \App\Models\User::class);
+            })
+            ->join('roles as r', 'r.id', '=', 'mhr.role_id')
+            ->where('r.name', 'customer')
+
             ->where('scr.zone_id', $zoneId)
             ->where('scr.subscription_type_id', $subTypeId)
             ->where('do.status', 'active')
@@ -166,12 +181,11 @@ class MeController extends Controller
                 'scr.for_user_id as customer_id',
                 DB::raw("COALESCE(NULLIF(u.name,''), NULLIF(u.display_name,''), NULLIF(TRIM(CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,''))), ''), 'Customer') as customer_name"),
                 DB::raw("COALESCE(u.phone_normalized, u.phone, '') as customer_phone"),
-
-                // ✅ add these
                 DB::raw("COALESCE(u.nagar, '') as nagar"),
                 DB::raw("COALESCE(u.address, '') as address"),
             ])
             ->get();
+
         // ✅ Fetch today's order status for these customers (single query, no N+1)
         $customerIds = $baseRows->pluck('customer_id')->filter()->unique()->values()->all();
 
@@ -216,10 +230,10 @@ class MeController extends Controller
 
             $pendingDates = DB::table('orders')
                 ->where('zone_id', $zoneId)
-                // ->where('subscription_type_id', $subTypeId)     // ✅ important
+                ->whereIn('customer_id', $customerIds)   // ✅ ADD THIS
                 ->whereNotNull('delivery_date')
                 ->where('delivery_status', 'pending')
-                ->whereDate('delivery_date', '<=', $today)      // ✅ include today
+                ->whereDate('delivery_date', '<=', $today)
                 ->selectRaw("DATE(delivery_date) as d")
                 ->groupBy('d')
                 ->orderByDesc('d')
@@ -227,20 +241,20 @@ class MeController extends Controller
                 ->map(fn($d) => Carbon::parse($d)->format('Y-m-d'))
                 ->values();
 
-
             $doneDates = DB::table('orders')
+                ->whereIn('customer_id', $customerIds)   // ✅ ADD THIS
                 ->whereNotNull('delivery_date')
                 ->where('delivery_status', 'delivered')
                 ->where(function ($q) use ($zoneId) {
-                    $q->where('zone_id', $zoneId)
-                        ->orWhereNull('zone_id'); // ✅ include bad rows
+                    $q->where('zone_id', $zoneId)->orWhereNull('zone_id');
                 })
                 ->selectRaw("DATE(delivery_date) as d")
                 ->groupBy('d')
                 ->orderByDesc('d')
                 ->pluck('d')
-                ->map(fn($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
+                ->map(fn($d) => Carbon::parse($d)->format('Y-m-d'))
                 ->values();
+
 
             return response()->json([
                 'delivery_task_id' => (int) $task->id,

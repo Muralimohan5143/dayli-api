@@ -63,6 +63,10 @@ class OtpAuthController extends Controller
             $customer->email        = null;
             $customer->password     = bcrypt(Str::random(32));
             $customer->save();
+            // ✅ Assign default customer role if not assigned
+            if (method_exists($customer, 'assignRole') && $customer->getRoleNames()->isEmpty()) {
+                $customer->assignRole('customer');
+            }
         }
 
         // 2️⃣ GENERATE OTP (SERVER-SIDE)
@@ -78,7 +82,7 @@ class OtpAuthController extends Controller
         ]);
 
         //if (!app()->environment(['local', 'testing'])) 
-            {
+        {
             //4️⃣ SEND OTP VIA INTERAKT (WhatsApp)
             // $result = $interakt->sendOtp($last10, $otp);
 
@@ -191,14 +195,36 @@ class OtpAuthController extends Controller
             }
         }
 
-
+        // ✅ Ensure user has at least customer role
+        if (method_exists($user, 'assignRole') && $user->getRoleNames()->isEmpty()) {
+            $user->assignRole('customer');
+        }
 
         // 3️⃣ ISSUE SANCTUM TOKEN FOR THIS USER
         $token = $user->createToken('dayli-mobile')->plainTextToken;
 
 
+        // ✅ Check if profile is completed (name + default address exists)
+        $hasDefaultAddress = DB::table('addresses')
+            ->where('addressable_type', User::class)
+            ->where('addressable_id', $user->id)
+            ->where('is_default', 1)
+            ->whereNotNull('line1')
+            ->where('line1', '!=', '')
+            ->exists();
+
+        $profileCompleted = !empty($user->name) && $hasDefaultAddress;
+
+        // ✅ User role (Spatie)
+        $role = method_exists($user, 'getRoleNames')
+            ? ($user->getRoleNames()->first() ?? null)
+            : null;
+
+
         return response()->json([
             'token'        => $token,
+            'role'         => $role,
+            'profile_completed' => $profileCompleted ? 1 : 0,
             'user_id'      => $user->id,
             'name'         => $user->display_name,
             'display_name' => $user->display_name,
