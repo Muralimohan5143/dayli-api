@@ -45,10 +45,24 @@ class SubscriptionSelectionController extends Controller
         if (! $user) {
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
-        $zoneId = $this->ensureZoneIdForUser($user); // ✅ ONE TIME
+        $zoneId = $this->ensureZoneIdForUser($user) ?? 1; // ✅ fallback to zone 1
+
+        if (!$zoneId) {
+            return response()->json([
+                'ok'      => false,
+                'message' => 'Zone not set for this user. Please update profile pincode/address and try again.',
+            ], 422);
+        }
+
+
+        // ✅ Decide part_type based on logged-in role
+        //$partType = $user->hasRole('vendor') ? 'supplier' : 'consumer';
+
 
 
         $data = $request->validate([
+            'party_type' => ['required', 'in:consumer,supplier'],
+
             'items'                        => ['required', 'array', 'min:1'],
             'items.*.subscription_type_id' => ['required', 'integer'],
             'items.*.sub_type_id'          => ['required', 'integer'],
@@ -69,6 +83,8 @@ class SubscriptionSelectionController extends Controller
         ]);
 
         $items = collect($data['items']);
+        $partType = $data['party_type']; // ✅ comes from Flutter
+
 
         $defaultFrequency = 'daily';
         $today = Carbon::today()->toDateString();
@@ -152,6 +168,8 @@ class SubscriptionSelectionController extends Controller
                  * NOTE: This assumes subtypes_json is a JSON column. If it's TEXT, swap the where line.
                  */
                 $scr = SubChangeRequest::where('for_user_id', $user->id)
+                    ->where('party_type', $partType)
+
                     ->where('subscription_type_id', $subscriptionTypeId)
                     ->whereIn('status', ['pending', 'approved'])
                     ->where(function ($q) use ($subTypeId) {
@@ -175,6 +193,12 @@ class SubscriptionSelectionController extends Controller
                     $scr->zone_id = $zoneId;
                     $scr->save();
                 }
+                if ($scr && empty($scr->party_type)) {
+                    $scr->party_type = $partType;
+                    $scr->save();
+                }
+
+
 
                 if ($draft && is_null($draft->zone_id)) {
                     $draft->zone_id = $zoneId;
@@ -186,6 +210,8 @@ class SubscriptionSelectionController extends Controller
                     $scr = SubChangeRequest::create([
                         'for_user_id'            => $user->id,
                         'by_user_id'             => $user->id,
+                        'party_type'              => $partType,
+
                         'from_id'                => null,
                         'draft_order_id'         => null,
                         'zone_id'                => $zoneId,

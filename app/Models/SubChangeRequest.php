@@ -20,6 +20,8 @@ class SubChangeRequest extends Model
     protected $fillable = [
         'for_user_id',
         'by_user_id',
+        'party_type',
+
         'from_id',
         'order_id',
         'draft_order_id',

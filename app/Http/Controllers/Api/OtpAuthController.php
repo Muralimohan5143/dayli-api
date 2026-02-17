@@ -224,6 +224,8 @@ class OtpAuthController extends Controller
         return response()->json([
             'token'        => $token,
             'role'         => $role,
+            'roles' => method_exists($user, 'getRoleNames') ? $user->getRoleNames()->values() : [],
+
             'profile_completed' => $profileCompleted ? 1 : 0,
             'user_id'      => $user->id,
             'name'         => $user->display_name,
