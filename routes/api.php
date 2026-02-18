@@ -13,9 +13,11 @@ use App\Http\Controllers\Api\SubscriptionsApiController;
 use App\Http\Controllers\Api\SubscriptionChangeController;
 use App\Http\Controllers\Api\MeController;
 use App\Http\Controllers\Api\MyWorkController;
+use App\Http\Controllers\Api\MySuppliesController; // ✅ ADD (create controller)
 use App\Http\Controllers\Api\ZoneApiController;
 use App\Http\Controllers\Api\AdminBillingController;
-
+use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\SesWebhookController;
 
 /*
 |--------------------------------------------------------------------------
@@ -34,7 +36,7 @@ Route::post('/auth/send-otp', [OtpAuthController::class, 'sendOtp']);
 Route::post('/auth/verify-otp', [OtpAuthController::class, 'verifyOtp']);
 
 // Webhooks
-Route::post('/ses/feedback', [\App\Http\Controllers\SesWebhookController::class, 'handle']);
+Route::post('/ses/feedback', [SesWebhookController::class, 'handle']);
 
 // Catalog / discovery
 Route::get('/subscriptions', [MobileController::class, 'getSubscriptions']);
@@ -57,93 +59,102 @@ Route::get('/zone/resolve', [ZoneApiController::class, 'resolveFromLatLng']);
 // ==============================
 Route::middleware('auth:sanctum')->group(function () {
 
-    // User info
-    Route::get('/user', function (Request $request) {
-        return $request->user();
-    });
-
-    // Role-aware profile for app
+    // --------------------------
+    // User / Profile
+    // --------------------------
+    Route::get('/user', fn(Request $request) => $request->user());
     Route::get('/me', [MeController::class, 'show']);
-    Route::get('/my-work/summary', [MyWorkController::class, 'summary']);
+    Route::post('/profile/service', [ProfileController::class, 'saveServiceProfile']);
 
-    Route::get('/my-work/orders', [MeController::class, 'myWorkOrders']);
-
-    Route::get('/my-work/add-item-products', [MeController::class, 'getAddItemProducts']);
-    Route::post('/my-work/item/update-qty', [MeController::class, 'updateItemQty']);
-    Route::post('/my-work/create-order', [MeController::class, 'createOrderFromMyWork']);
-    Route::get('/my-work/add-item-options', [MeController::class, 'addItemOptions']);
-
-
-    Route::get('/my-work/subscription-types', [MeController::class, 'myWorkSubscriptionTypes']);
-
-
-
-    Route::get('/admin/billing/search', [AdminBillingController::class, 'search']);
-    Route::get('/admin/billing/user-unpaid', [AdminBillingController::class, 'userUnpaid']);
-    Route::get('/admin/billing/unpaid-invoices', [AdminBillingController::class, 'unpaidInvoices']);
-    Route::post('/admin/billing/collect-payment', [AdminBillingController::class, 'collectPayment']);
-    Route::post('/admin/billing/inward-payment', [AdminBillingController::class, 'storeInwardPayment']);
-    Route::post('/admin/billing/inward-payment-auto', [AdminBillingController::class, 'storeInwardPaymentAuto']);
-    Route::post('/admin/billing/inward-payment-allocations', [AdminBillingController::class, 'storeInwardPaymentAllocations']);
-
-
-    Route::post('/profile/service', [\App\Http\Controllers\Api\ProfileController::class, 'saveServiceProfile']);
-
-
-
-
+    // --------------------------
     // Orders
+    // --------------------------
     Route::get('/my-orders', [MyOrdersController::class, 'index']);
     Route::get('/orders/{id}', [OrderApiController::class, 'show']); // protected only
 
-    // Subscriptions
+    // --------------------------
+    // Subscriptions (Customer view)
+    // --------------------------
     Route::get('/my-subscriptions', [SubscriptionsApiController::class, 'index']);
 
     // Add subscriptions from selection (bulk)
-    Route::post('/my-subscriptions/store-from-selection', [
-        SubscriptionSelectionController::class,
-        'store',
-    ]);
+    Route::post('/my-subscriptions/store-from-selection', [SubscriptionSelectionController::class, 'store']);
 
     // Update subscription item (edit)
-    Route::put('/my-subscriptions/items/{item}', [
-        SubscriptionSelectionController::class,
-        'updateItem',
-    ]);
+    Route::put('/my-subscriptions/items/{item}', [SubscriptionSelectionController::class, 'updateItem']);
 
     // Pause / Cancel / Resume / Restart
-    Route::post('/my-subscriptions/items/{item}/pause', [
-        SubscriptionsApiController::class,
-        'pause',
-    ]);
-
-    Route::post('/my-subscriptions/items/{item}/cancel', [
-        SubscriptionsApiController::class,
-        'cancel',
-    ]);
-
-    Route::post('/my-subscriptions/items/{item}/resume', [
-        SubscriptionsApiController::class,
-        'resume',
-    ]);
-
-    Route::post('/my-subscriptions/items/{item}/restart', [
-        SubscriptionsApiController::class,
-        'restart',
-    ]);
+    Route::post('/my-subscriptions/items/{item}/pause',   [SubscriptionsApiController::class, 'pause']);
+    Route::post('/my-subscriptions/items/{item}/cancel',  [SubscriptionsApiController::class, 'cancel']);
+    Route::post('/my-subscriptions/items/{item}/resume',  [SubscriptionsApiController::class, 'resume']);
+    Route::post('/my-subscriptions/items/{item}/restart', [SubscriptionsApiController::class, 'restart']);
 
     Route::post('/subscriptions/raise-dispute', [SubscriptionsApiController::class, 'raiseDispute']);
 
-
     // Change endpoint (pause/cancel request payload)
-    Route::post('/my-subscriptions/change', [
-        SubscriptionChangeController::class,
-        'store',
-    ]);
+    Route::post('/my-subscriptions/change', [SubscriptionChangeController::class, 'store']);
 
-    // ✅ My Work (Delivery Boy)
-    Route::get('/my-work', [MyWorkController::class, 'index']);
-    Route::post('/my-work/{id}/start', [MyWorkController::class, 'start']);
-    Route::post('/my-work/{id}/complete', [MyWorkController::class, 'complete']);
-    Route::get('/my-work/all-products', [\App\Http\Controllers\Api\MyWorkController::class, 'allProducts']);
+    // --------------------------
+    // Admin billing
+    // --------------------------
+    Route::prefix('admin/billing')->group(function () {
+        Route::get('/search', [AdminBillingController::class, 'search']);
+        Route::get('/user-unpaid', [AdminBillingController::class, 'userUnpaid']);
+        Route::get('/unpaid-invoices', [AdminBillingController::class, 'unpaidInvoices']);
+        Route::post('/collect-payment', [AdminBillingController::class, 'collectPayment']);
+        Route::post('/inward-payment', [AdminBillingController::class, 'storeInwardPayment']);
+        Route::post('/inward-payment-auto', [AdminBillingController::class, 'storeInwardPaymentAuto']);
+        Route::post('/inward-payment-allocations', [AdminBillingController::class, 'storeInwardPaymentAllocations']);
+    });
+
+    // --------------------------
+    // My Work (Delivery Boy)
+    // --------------------------
+    Route::prefix('my-work')->group(function () {
+        // Screen summary
+        Route::get('/summary', [MyWorkController::class, 'summary']);
+
+        // Orders list + date dropdown + task list
+        Route::get('/orders', [MeController::class, 'myWorkOrders']);
+
+        // Add-item flow
+        Route::get('/add-item-products', [MeController::class, 'getAddItemProducts']);
+        Route::get('/add-item-options',  [MeController::class, 'addItemOptions']);
+        Route::post('/item/update-qty',  [MeController::class, 'updateItemQty']);
+        Route::post('/create-order',     [MeController::class, 'createOrderFromMyWork']);
+
+        // Subscription type picker
+        Route::get('/subscription-types', [MeController::class, 'myWorkSubscriptionTypes']);
+
+        // Task lifecycle
+        Route::get('/',               [MyWorkController::class, 'index']);
+        Route::post('/{id}/start',    [MyWorkController::class, 'start']);
+        Route::post('/{id}/complete', [MyWorkController::class, 'complete']);
+
+        // Product master
+        Route::get('/all-products', [MyWorkController::class, 'allProducts']);
+    });
+
+    // --------------------------
+    // My Supplies (Vendor)
+    // NOTE: Create controller MySuppliesController with same methods as MyWorkController/MeController flow.
+    // Backend must filter supplier side: scr.party_type = 'supplier'
+    // --------------------------
+    Route::prefix('my-supplies')->group(function () {
+        Route::get('/summary', [MySuppliesController::class, 'summary']);
+        Route::get('/orders',  [MySuppliesController::class, 'orders']);
+
+        Route::get('/add-item-products', [MySuppliesController::class, 'getAddItemProducts']);
+        Route::get('/add-item-options',  [MySuppliesController::class, 'addItemOptions']);
+        Route::post('/item/update-qty',  [MySuppliesController::class, 'updateItemQty']);
+        Route::post('/create-order',     [MySuppliesController::class, 'createOrderFromMySupplies']);
+
+        Route::get('/subscription-types', [MySuppliesController::class, 'subscriptionTypes']);
+
+        Route::get('/',               [MySuppliesController::class, 'index']);
+        Route::post('/{id}/start',    [MySuppliesController::class, 'start']);
+        Route::post('/{id}/complete', [MySuppliesController::class, 'complete']);
+
+        Route::get('/all-products', [MySuppliesController::class, 'allProducts']);
+    });
 });

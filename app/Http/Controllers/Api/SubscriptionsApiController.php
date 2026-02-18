@@ -33,6 +33,8 @@ class SubscriptionsApiController extends Controller
                 ->join('draft_orders as dor', 'dor.id', '=', 'doi.draft_order_id')
                 ->join('sub_change_requests as scr', 'scr.id', '=', 'dor.change_request_id')
                 ->where('scr.for_user_id', $user->id)
+                ->where('scr.party_type', 'consumer')   // ✅ ADD THIS
+
                 ->where('dor.status', 'active')
 
                 // ✅ start_date can be NULL OR <= asOf

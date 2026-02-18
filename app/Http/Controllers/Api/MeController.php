@@ -191,8 +191,9 @@ class MeController extends Controller
 
         // ✅ Ensure daily order rows exist for targetDate (default: today)
         // This makes sure "today" shows in pending dates + UI status works.
-        $requestedDate = $request->query('delivery_date'); // '2026-02-10'
+        $requestedDate = $request->query('delivery_date') ?? $request->query('deliveryDate'); // ✅ accept both
         $targetDate = $requestedDate ? Carbon::parse($requestedDate)->toDateString() : $today;
+
 
         if (!empty($customerIds)) {
 
