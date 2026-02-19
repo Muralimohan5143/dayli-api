@@ -122,44 +122,251 @@ class MySuppliesController extends Controller
      */
     public function orders(Request $request)
     {
+        return $this->mySuppliesOrders($request);
+    }
+
+
+
+    public function mySuppliesOrders(Request $request)
+    {
         $user = $request->user();
         if (!$user) return response()->json(['message' => 'Unauthenticated'], 401);
 
         $vendorId = (int) $user->id;
-        $subTypeId = (int) $request->query('subscription_type_id');
 
-        $today = now()->toDateString();
+        $subTypeId = (int) $request->query('subscription_type_id', 0);
+        if ($subTypeId <= 0) {
+            return response()->json([
+                'message' => 'subscription_type_id is required',
+                'data'    => [],
+            ], 422);
+        }
 
-        $rows = DB::table('draft_order_items as doi')
-            ->join('draft_orders as dor', 'dor.id', '=', 'doi.draft_order_id')
-            ->join('sub_change_requests as scr', 'scr.id', '=', 'dor.change_request_id')
-            ->join('users as u', 'u.id', '=', 'scr.for_user_id') // customer
+        $today = \Carbon\Carbon::today()->toDateString();
+
+        // same style as MyWorkOrders: accept delivery_date or deliveryDate
+        $requestedDate = $request->query('delivery_date') ?? $request->query('deliveryDate');
+        $targetDate = $requestedDate ? \Carbon\Carbon::parse($requestedDate)->toDateString() : $today;
+
+        $mode = (string) $request->query('mode', '');     // mode=dates
+        $type = (string) $request->query('status', 'today'); // today|pending|completed
+
+        // ---------------------------------------------------------
+        // 1) Base rows (supplier side subscriptions -> customer list)
+        // ---------------------------------------------------------
+        $baseRows = DB::table('draft_order_items as doi')
+            ->join('draft_orders as do', 'do.id', '=', 'doi.draft_order_id')
+            ->join('sub_change_requests as scr', 'scr.id', '=', 'do.change_request_id')
+            ->join('users as u', 'u.id', '=', 'scr.for_user_id') // customer who receives supply
             ->where('scr.party_type', 'supplier')
             ->where('scr.by_user_id', $vendorId)
             ->where('scr.subscription_type_id', $subTypeId)
             ->whereIn('scr.status', ['pending', 'approved'])
-
-            ->where(function ($q) use ($today) {
-                $q->whereNull('doi.start_date')
-                    ->orWhereDate('doi.start_date', '<=', $today);
-            })
-            ->where(function ($q) use ($today) {
-                $q->whereNull('doi.end_date')
-                    ->orWhereDate('doi.end_date', '>=', $today);
-            })
-            ->select(
-                'doi.id',
-                'u.name as customer_name',
-                'u.phone as customer_phone',
-                'doi.qty',
-                'doi.unit',
-                'doi.product_id',
-                'doi.variant_id'
-            )
+            ->where('do.status', 'active')
+            ->where('doi.status', 'active')
             ->orderBy('u.name')
+            ->select([
+                'doi.id as draft_order_item_id',
+                'doi.draft_order_id',
+                'scr.zone_id as zone_id',
+                'scr.for_user_id as customer_id',
+                DB::raw("COALESCE(NULLIF(u.name,''), NULLIF(u.display_name,''), NULLIF(TRIM(CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,''))), ''), 'Customer') as customer_name"),
+                DB::raw("COALESCE(u.phone_normalized, u.phone, '') as customer_phone"),
+                DB::raw("COALESCE(u.nagar, '') as nagar"),
+                DB::raw("COALESCE(u.address, '') as address"),
+            ])
             ->get();
 
-        return response()->json(['data' => $rows]);
+        if ($baseRows->isEmpty()) {
+            // still support mode=dates for empty
+            if ($mode === 'dates') {
+                return response()->json([
+                    'subscription_type_id' => (int) $subTypeId,
+                    'vendor_id'            => (int) $vendorId,
+                    'pending_dates'        => [],
+                    'done_dates'           => [],
+                ]);
+            }
+
+            return response()->json([
+                'subscription_type_id' => (int) $subTypeId,
+                'vendor_id'            => (int) $vendorId,
+                'date'                 => $targetDate,
+                'data'                 => [],
+            ]);
+        }
+
+        // ---------------------------------------------------------
+        // 2) Ensure daily order rows exist (vendor + draft_order_id + date)
+        // ---------------------------------------------------------
+        $draftOrderIds = $baseRows->pluck('draft_order_id')->filter()->unique()->values()->all();
+
+        // existing order rows for this vendor + targetDate + those draft_orders
+        $existingDoIds = DB::table('orders')
+            ->where('customer_id', $vendorId)                 // ✅ vendor owns supply-orders
+            ->whereDate('delivery_date', $targetDate)
+            ->whereIn('draft_order_id', $draftOrderIds)
+            ->pluck('draft_order_id')
+            ->unique()
+            ->all();
+
+        $missingDoIds = array_values(array_diff($draftOrderIds, $existingDoIds));
+
+        if (!empty($missingDoIds)) {
+            $now = \Carbon\Carbon::now();
+
+            // map draft_order_id -> zone_id (best effort)
+            $zoneByDo = $baseRows->groupBy('draft_order_id')->map(function ($rows) {
+                return (int) ($rows->first()->zone_id ?? 0);
+            });
+
+            $insertRows = array_map(function ($doId) use ($vendorId, $targetDate, $now, $zoneByDo) {
+                $z = (int) ($zoneByDo[$doId] ?? 0);
+
+                return [
+                    'order_type'       => 'subscription',
+                    'customer_id'      => (int) $vendorId,
+                    'zone_id'          => $z > 0 ? $z : null,
+                    'draft_order_id'   => (int) $doId,
+                    'delivery_date'    => $targetDate,
+                    'delivery_status'  => 'pending',
+                    'status'           => 'pending',
+                    'created_at'       => $now,
+                    'updated_at'       => $now,
+                ];
+            }, $missingDoIds);
+
+            DB::table('orders')->insert($insertRows);
+        }
+
+        // ---------------------------------------------------------
+        // 3) mode=dates (pending/done date options for modal)
+        // ---------------------------------------------------------
+        if ($mode === 'dates') {
+
+            $pendingDates = DB::table('orders')
+                ->where('customer_id', $vendorId)
+                ->whereIn('draft_order_id', $draftOrderIds)
+                ->whereNotNull('delivery_date')
+                ->where('delivery_status', 'pending')
+                ->whereDate('delivery_date', '<=', $today)
+                ->selectRaw("DATE(delivery_date) as d")
+                ->groupBy('d')
+                ->orderByDesc('d')
+                ->pluck('d')
+                ->map(fn($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
+                ->values();
+
+            $doneDates = DB::table('orders')
+                ->where('customer_id', $vendorId)
+                ->whereIn('draft_order_id', $draftOrderIds)
+                ->whereNotNull('delivery_date')
+                ->where('delivery_status', 'delivered')
+                ->selectRaw("DATE(delivery_date) as d")
+                ->groupBy('d')
+                ->orderByDesc('d')
+                ->pluck('d')
+                ->map(fn($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
+                ->values();
+
+            return response()->json([
+                'subscription_type_id' => (int) $subTypeId,
+                'vendor_id'            => (int) $vendorId,
+                'pending_dates'        => $pendingDates,
+                'done_dates'           => $doneDates,
+            ]);
+        }
+
+        // ---------------------------------------------------------
+        // 4) Load today's/dates orders status map (by draft_order_id)
+        // ---------------------------------------------------------
+        $orders = DB::table('orders')
+            ->select('id', 'draft_order_id', 'delivery_status')
+            ->where('customer_id', $vendorId)
+            ->whereIn('draft_order_id', $draftOrderIds)
+            ->whereDate('delivery_date', $targetDate)
+            ->orderByDesc('id')
+            ->get();
+
+        // latest per draft_order_id
+        $ordersMap = $orders->groupBy('draft_order_id')->map(function ($g) {
+            return $g->first();
+        });
+
+        // optional tab filter: pending/completed
+        if ($type === 'pending' || $type === 'completed') {
+            $want = ($type === 'pending') ? 'pending' : 'delivered';
+            $allowedDoIds = $ordersMap
+                ->filter(fn($o) => ($o->delivery_status ?? '') === $want)
+                ->keys()
+                ->map(fn($k) => (int) $k)
+                ->values()
+                ->all();
+
+            // keep only rows whose draft_order is in the allowed set
+            $baseRows = $baseRows->filter(function ($r) use ($allowedDoIds) {
+                return in_array((int) $r->draft_order_id, $allowedDoIds, true);
+            })->values();
+        }
+
+        // ---------------------------------------------------------
+        // 5) Load item+product details like MyWorkOrders
+        // ---------------------------------------------------------
+        $ids = $baseRows->pluck('draft_order_item_id')->all();
+        $customerMap = $baseRows->keyBy('draft_order_item_id');
+
+        $items = DraftOrderItem::query()
+            ->with('product')
+            ->whereIn('id', $ids)
+            ->get()
+            ->keyBy('id');
+
+        $rows = collect($ids)->map(function ($id) use ($items, $customerMap, $ordersMap) {
+            $item = $items->get($id);
+            $c    = $customerMap->get($id);
+
+            if (!$item || !$c) return null;
+
+            $doId = (int) ($c->draft_order_id ?? 0);
+            $o    = $ordersMap->get($doId);
+
+            return [
+                'draft_order_item_id' => (int) $item->id,
+                'draft_order_id'      => (int) $item->draft_order_id,
+
+                // customer receiving supply
+                'customer_id'         => (int) ($c->customer_id ?? 0),
+                'customer_name'       => $c->customer_name ?? 'Customer',
+                'customer_phone'      => $c->customer_phone ?? '',
+
+                'nagar'               => $c->nagar ?? '',
+                'address'             => $c->address ?? '',
+
+                // daily status for vendor supply order (by draft_order_id)
+                'today_order_id'      => $o ? (int) $o->id : 0,
+                'delivery_status'     => $o->delivery_status ?? 'pending',
+
+                // product details
+                'product_title'       => optional($item->product)->title ?? 'Product',
+                'image_url'           => optional($item->product)->img_src ?? '',
+
+                'qty'                 => (float) $item->qty,
+                'unit'                => $item->unit,
+                'price_snapshot'      => $item->price_snapshot,
+                'frequency_type'      => $item->frequency_type,
+                'item_status'         => $item->status ?? 'active',
+
+                'product_id'          => (int) $item->product_id,
+                'variant_id'          => (int) $item->variant_id,
+            ];
+        })->filter()->values();
+
+        return response()->json([
+            'subscription_type_id' => (int) $subTypeId,
+            'vendor_id'            => (int) $vendorId,
+            'date'                 => $targetDate,
+            'data'                 => $rows,
+        ]);
     }
 
     /**
@@ -278,15 +485,20 @@ class MySuppliesController extends Controller
             ->join('subscription_types as st', 'st.id', '=', 'scr.subscription_type_id')
             ->where('scr.party_type', 'supplier')
             ->where('scr.by_user_id', $vendorId)
-            ->where('scr.status', 'approved') // important
-            ->select('st.id', 'st.name')
-            ->distinct()
+            ->whereIn('scr.status', ['pending', 'approved'])
+            ->select(
+                'st.id',
+                'st.name',
+                DB::raw('COUNT(*) as total')
+            )
+            ->groupBy('st.id', 'st.name')
             ->orderBy('st.name')
             ->get();
 
-        return response()->json(['data' => $types]);
+        return response()->json([
+            'data' => $types
+        ]);
     }
-
 
 
     /**
