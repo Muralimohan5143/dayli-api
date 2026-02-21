@@ -271,8 +271,8 @@ class MeController extends Controller
 
         $type = (string) $request->query('status', 'today'); // today|pending|completed
         // ✅ NEW: date filter for list UI
-        // $requestedDate = $request->query('delivery_date'); // '2026-02-10'
-        // $targetDate = $requestedDate ? Carbon::parse($requestedDate)->toDateString() : $today;
+        $requestedDate = $request->query('delivery_date'); // '2026-02-10'
+        $targetDate = $requestedDate ? Carbon::parse($requestedDate)->toDateString() : $today;
 
 
 
@@ -543,13 +543,15 @@ class MeController extends Controller
             'items.*.quantity' => 'required|integer|min:1|max:9999',
         ]);
 
-        $today = Carbon::today()->toDateString();
+        $deliveryDate = $request->input('delivery_date')
+            ? Carbon::parse($request->delivery_date)->toDateString()
+            : Carbon::today()->toDateString();
 
-        return DB::transaction(function () use ($request, $today) {
+        return DB::transaction(function () use ($request, $deliveryDate) {
 
             // 1️⃣ Find today order (same customer, same day)
             $order = Order::where('customer_id', $request->customer_id)
-                ->whereDate('delivery_date', $today)
+                ->whereDate('delivery_date', $deliveryDate)
                 ->orderByDesc('id')
                 ->first();
 
@@ -568,7 +570,7 @@ class MeController extends Controller
                     'currency_code'  => 'INR',
 
                     // ✅ delivery tracking
-                    'delivery_date'   => $today,
+                    'delivery_date'   => $deliveryDate,
                     'delivery_status' => 'delivered',
                     'delivered_at'    => now(),
                     'delivered_by'    => Auth::id(),
@@ -677,7 +679,7 @@ class MeController extends Controller
                     $oi->title = $title;
                     $oi->variant = $variant;
                     $oi->image_url = $img;
-                    $oi->actuals_date = $today;
+                    $oi->actuals_date = $deliveryDate;
                     $oi->save();
 
                     activity('order_item')
@@ -700,7 +702,7 @@ class MeController extends Controller
                         'quantity'     => $qty,
                         'unit_price' => $unitPrice,
                         'line_total' => $lineTotal,
-                        'actuals_date' => $today,
+                        'actuals_date' => $deliveryDate,
                         'meta'         => [
                             'created_by' => 'my_work_save',
                             'source'     => $item['source'] ?? null,
@@ -708,7 +710,7 @@ class MeController extends Controller
                     ]);
                 }
             }
-            $order->delivery_date   = $order->delivery_date ?? $today;
+            $order->delivery_date   = $order->delivery_date ?? $deliveryDate;
             $order->delivery_status = 'delivered';
             $order->delivered_at    = now();
             $order->delivered_by    = Auth::id();

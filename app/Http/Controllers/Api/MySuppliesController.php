@@ -7,6 +7,7 @@ use App\Models\DraftOrderItem;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 
 class MySuppliesController extends Controller
 {
@@ -458,14 +459,229 @@ class MySuppliesController extends Controller
      */
     public function createOrderFromMySupplies(Request $request)
     {
-        $this->ensureVendor($request);
+        $user = $request->user();
+        if (! $user) {
+            return response()->json(['message' => 'Unauthenticated'], 401);
+        }
 
-        // Minimal placeholder to avoid breaking compile; replace with your real code.
-        return response()->json([
-            'message' => 'TODO: implement createOrderFromMySupplies (copy from createOrderFromMyWork)',
-        ], 422);
+        $vendorId = (int) $user->id;
+
+        // ✅ Always validate items
+        $request->validate([
+            'items'            => 'required|array|min:1',
+            'items.*.quantity' => 'required|integer|min:1|max:9999',
+            'delivery_date' => 'nullable|date',
+        ]);
+
+        // ✅ Resolve SCR id (direct OR fallback)
+        $scrId = (int) ($request->input('change_request_id') ?? 0);
+
+        if ($scrId <= 0) {
+            $request->validate([
+                'customer_id'          => 'required|integer',
+                'subscription_type_id' => 'required|integer',
+            ]);
+
+            $scrId = (int) DB::table('sub_change_requests')
+                ->where('party_type', 'supplier')
+                ->where('by_user_id', $vendorId)
+                ->where('for_user_id', (int) $request->customer_id)
+                ->where('subscription_type_id', (int) $request->subscription_type_id)
+                ->whereIn('status', ['pending', 'approved'])
+                ->orderByDesc('id')
+                ->value('id');
+        }
+
+        if ($scrId <= 0) {
+            return response()->json(['message' => 'Invalid supplier SCR'], 422);
+        }
+
+        $deliveryDate = $request->input('delivery_date')
+            ? \Carbon\Carbon::parse($request->delivery_date)->toDateString()
+            : \Carbon\Carbon::today()->toDateString();
+
+        return DB::transaction(function () use ($request, $deliveryDate, $vendorId, $scrId) {
+
+            // 1️⃣ Load SCR (must belong to this vendor + supplier)
+            $scr = DB::table('sub_change_requests')
+                ->where('id', $scrId)
+                ->where('party_type', 'supplier')
+                ->where('by_user_id', $vendorId)
+                ->first();
+
+            if (! $scr) {
+                return response()->json(['message' => 'Invalid supplier SCR'], 422);
+            }
+
+            $customerId = (int) $scr->for_user_id;
+            $zoneId     = $scr->zone_id ?? null;
+
+            // 2️⃣ Find today order (same customer, same vendor, same day)
+            $order = \App\Models\Order::where('customer_id', $customerId)
+                ->where('vendor_id', $vendorId)
+                ->whereDate('delivery_date', $deliveryDate)
+                ->orderByDesc('id')
+                ->first();
+
+            $isNew = false;
+
+            // 3️⃣ If not exists → create (PENDING delivery)
+            if (! $order) {
+                $isNew = true;
+
+                $order = \App\Models\Order::create([
+                    'customer_id'    => $customerId,
+                    'vendor_id'      => $vendorId,
+                    'draft_order_id' => $request->draft_order_id ?? null, // optional if UI sends
+                    'zone_id'        => $request->zone_id ?? $zoneId,
+
+                    'order_type'     => 'subscription',
+                    'status'         => 'pending',
+                    'currency_code'  => 'INR',
+
+                    // ✅ supply entry should not mark delivered
+                    'delivery_date'   => $deliveryDate,
+                    'delivery_status' => 'pending',
+
+                    'created_at' => now(),
+                ]);
+            } else {
+                // If order exists, link missing ids
+                if (! $order->draft_order_id && $request->draft_order_id) {
+                    $order->draft_order_id = $request->draft_order_id;
+                }
+                if (! $order->zone_id && ($request->zone_id || $zoneId)) {
+                    $order->zone_id = $request->zone_id ?? $zoneId;
+                }
+                if (! $order->vendor_id) {
+                    $order->vendor_id = $vendorId;
+                }
+                $order->save();
+            }
+
+            // 4️⃣ Upsert order items (same logic as MyWork)
+            foreach ($request->items as $item) {
+
+                $pid = $item['product_id'] ?? null;
+                $vid = $item['variant_id'] ?? null;
+
+                $title   = $item['title'] ?? 'Item';
+                $variant = $item['variant'] ?? null;
+                $img     = $item['image_url'] ?? null;
+
+                $qty = (int) ($item['quantity'] ?? 1);
+
+                $unitPrice = 0;
+                $lineTotal = 0;
+
+                $doiId = $item['draft_order_item_id'] ?? null;
+
+                if ($doiId) {
+                    $doi = \App\Models\DraftOrderItem::find($doiId);
+                    if ($doi && $doi->price_snapshot) {
+
+                        $snap = $doi->price_snapshot;
+
+                        if (is_numeric($snap)) {
+                            $unitPrice = (float) $snap;
+                        } elseif (is_string($snap)) {
+                            if (is_numeric($snap)) {
+                                $unitPrice = (float) $snap;
+                            } else {
+                                $decoded = json_decode($snap, true);
+                                if (is_numeric($decoded)) {
+                                    $unitPrice = (float) $decoded;
+                                } elseif (is_array($decoded)) {
+                                    $unitPrice = (float)(
+                                        $decoded['unit_price']
+                                        ?? $decoded['price']
+                                        ?? $decoded['selling_price']
+                                        ?? 0
+                                    );
+                                }
+                            }
+                        } elseif (is_array($snap)) {
+                            $unitPrice = (float)(
+                                $snap['unit_price']
+                                ?? $snap['price']
+                                ?? $snap['selling_price']
+                                ?? 0
+                            );
+                        }
+                    }
+                }
+
+                $lineTotal = round($unitPrice * $qty, 2);
+
+                // ✅ Match existing order_item by product_id + variant_id when possible
+                $oiQuery = \App\Models\OrderItem::where('order_id', $order->id);
+
+                if (! empty($pid)) {
+                    $oiQuery->where('product_id', $pid);
+                    if (! empty($vid)) {
+                        $oiQuery->where('variant_id', $vid);
+                    } else {
+                        $oiQuery->whereNull('variant_id');
+                    }
+                } else {
+                    $oiQuery->where('title', $title);
+                    if (! empty($variant)) $oiQuery->where('variant', $variant);
+                }
+
+                $oi = $oiQuery->first();
+
+                if ($oi) {
+                    $meta = $oi->meta ?? [];
+                    if (! is_array($meta)) $meta = (array) $meta;
+                    $meta['updated_by'] = 'my_supplies_save';
+                    $meta['updated_at'] = now()->toDateTimeString();
+                    $meta['source']     = $item['source'] ?? ($meta['source'] ?? null);
+                    $oi->meta = $meta;
+
+                    $oi->quantity     = $qty;
+                    $oi->unit_price   = $unitPrice;
+                    $oi->line_total   = $lineTotal;
+                    $oi->title        = $title;
+                    $oi->variant      = $variant;
+                    $oi->image_url    = $img;
+                    $oi->actuals_date = $deliveryDate;
+                    $oi->save();
+                } else {
+                    \App\Models\OrderItem::create([
+                        'order_id'     => $order->id,
+                        'product_id'   => $pid,
+                        'variant_id'   => $vid,
+                        'title'        => $title,
+                        'variant'      => $variant,
+                        'image_url'    => $img,
+                        'quantity'     => $qty,
+                        'unit_price'   => $unitPrice,
+                        'line_total'   => $lineTotal,
+                        'actuals_date' => $deliveryDate,
+                        'meta'         => [
+                            'created_by' => 'my_supplies_save',
+                            'source'     => $item['source'] ?? null,
+                        ],
+                    ]);
+                }
+            }
+
+            // 5️⃣ Ensure supply order stays pending
+            $order->delivery_date   = $order->delivery_date ?? $deliveryDate;
+            $order->delivery_status = 'delivered';
+            $order->delivered_at    = now();
+            $order->delivered_by    = Auth::id();
+            $order->save();
+
+
+            return response()->json([
+                'order_id'        => $order->id,
+                'status'          => $isNew ? 'created' : 'updated',
+                'delivery_date'   => $order->delivery_date,
+                'delivery_status' => $order->delivery_status,
+            ]);
+        });
     }
-
     /**
      * GET /api/my-supplies/subscription-types
      * Used for the picker on My Supplies screen.
