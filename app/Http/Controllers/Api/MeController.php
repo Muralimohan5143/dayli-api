@@ -157,6 +157,12 @@ class MeController extends Controller
         //     ]);
         // }
 
+
+        $today = Carbon::today()->toDateString();
+
+        // ✅ accept both keys from flutter
+        $requestedDate = $request->query('delivery_date') ?? $request->query('deliveryDate');
+        $targetDate = $requestedDate ? Carbon::parse($requestedDate)->toDateString() : $today;
         $baseRows = DB::table('draft_order_items as doi')
             ->join('draft_orders as do', 'do.id', '=', 'doi.draft_order_id')
             ->join('sub_change_requests as scr', 'scr.id', '=', 'do.change_request_id')
@@ -174,6 +180,15 @@ class MeController extends Controller
             ->where('scr.subscription_type_id', $subTypeId)
             ->where('do.status', 'active')
             ->where('doi.status', 'active')
+            // ✅ IMPORTANT: only items active on targetDate
+            ->where(function ($w) use ($targetDate) {
+                $w->whereNull('doi.start_date')
+                    ->orWhereDate('doi.start_date', '<=', $targetDate);
+            })
+            ->where(function ($w) use ($targetDate) {
+                $w->whereNull('doi.end_date')
+                    ->orWhereDate('doi.end_date', '>=', $targetDate);
+            })
             ->orderBy('u.name')
             ->select([
                 'doi.id as draft_order_item_id',

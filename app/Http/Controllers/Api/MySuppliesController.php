@@ -165,6 +165,15 @@ class MySuppliesController extends Controller
             ->whereIn('scr.status', ['pending', 'approved'])
             ->where('do.status', 'active')
             ->where('doi.status', 'active')
+            // ✅ only items active on targetDate (prevents today's new item showing in old dates)
+            ->where(function ($w) use ($targetDate) {
+                $w->whereNull('doi.start_date')
+                    ->orWhereDate('doi.start_date', '<=', $targetDate);
+            })
+            ->where(function ($w) use ($targetDate) {
+                $w->whereNull('doi.end_date')
+                    ->orWhereDate('doi.end_date', '>=', $targetDate);
+            })
             ->orderBy('u.name')
             ->select([
                 'doi.id as draft_order_item_id',
@@ -227,6 +236,8 @@ class MySuppliesController extends Controller
                 return [
                     'order_type'       => 'subscription',
                     'customer_id'      => (int) $vendorId,
+                    // ✅ MUST SET THIS (prevents vendor_id null)
+                    'vendor_id'        => (int) $vendorId,
                     'zone_id'          => $z > 0 ? $z : null,
                     'draft_order_id'   => (int) $doId,
                     'delivery_date'    => $targetDate,
@@ -400,17 +411,56 @@ class MySuppliesController extends Controller
      */
     public function addItemOptions(Request $request)
     {
-        $this->ensureVendor($request);
+        $subscriptionTypeId = (int) $request->query('subscription_type_id', 0);
+        $customerId = (int) $request->query('customer_id', 0);
 
-        // Minimal placeholder: return subscription types + sub types
-        $types = DB::table('subscription_types')->select(['id', 'name'])->orderBy('name')->get();
-        $subTypes = DB::table('subscription_sub_types')->select(['id', 'subscription_type_id', 'name'])->orderBy('name')->get();
+        $subtypeSlug = trim((string) $request->query('subtype_slug', ''));
+
+        if ($subscriptionTypeId <= 0) {
+            return response()->json([
+                'message' => 'subscription_type_id is required',
+            ], 422);
+        }
+
+        $subTypes = DB::table('subscription_sub_types')
+            ->where('subscription_type_id', $subscriptionTypeId)
+            ->where('status', 'active')
+            ->select('id', 'name', 'slug')
+            ->orderBy('name')
+            ->get();
+
+        // ✅ pick default subtype if not sent
+        if ($subtypeSlug === '') {
+            $subtypeSlug = (string) optional($subTypes->first())->slug;
+        }
+
+        $products = collect();
+        if ($subtypeSlug !== '') {
+            $products = DB::table('products as p')
+                ->leftJoin('variants as v', function ($join) {
+                    $join->on('v.product_id', '=', 'p.product_id')
+                        ->where('v.position', '=', 1);   // ✅ default variant
+                })
+                ->where('p.product_sub_type', $subtypeSlug)
+                ->select(
+                    'p.product_id',
+                    'p.title',
+                    'p.img_src',
+                    'p.product_sub_type',
+                    'v.variant_id as default_variant_id',
+                    'v.price as variant_price',
+                    'v.sku as variant_sku'
+                )
+                ->orderBy('p.title')
+                ->get();
+        }
 
         return response()->json([
-            'data' => [
-                'subscription_types'     => $types,
-                'subscription_sub_types' => $subTypes,
-            ],
+            'customer_id' => $customerId,
+            'subscription_type_id' => $subscriptionTypeId,
+            'selected_subtype_slug' => $subtypeSlug,  // ✅ helpful for Flutter
+            'sub_types' => $subTypes,
+            'products' => $products,
         ]);
     }
 
