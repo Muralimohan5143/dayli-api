@@ -723,6 +723,33 @@ class MySuppliesController extends Controller
             $order->delivered_by    = Auth::id();
             $order->save();
 
+            // 6️⃣ Write outbox event (vendor_supply_entered)
+            DB::table('outbox_events')->updateOrInsert(
+                [
+                    'idempotency_key' => "vendor_supply_entered:order:{$order->id}",
+                ],
+                [
+                    'event_type'     => 'vendor_supply_entered',
+                    'aggregate_type' => 'order',
+                    'aggregate_id'   => $order->id,
+                    'user_id'        => $vendorId,
+                    'payload'        => json_encode([
+                        'vendor_id'     => $vendorId,
+                        'order_id'      => $order->id,
+                        'delivery_date' => $deliveryDate,
+                        'zone_id'       => $order->zone_id,
+                        'source'        => 'dayli_app',
+                    ], JSON_UNESCAPED_UNICODE),
+
+                    'status'        => 'pending',
+                    'attempts'      => 0,
+                    'max_attempts'  => 12,
+                    'available_at'  => now(),
+                    'updated_at'    => now(),
+                    'created_at'    => now(),
+                ]
+            );
+
 
             return response()->json([
                 'order_id'        => $order->id,

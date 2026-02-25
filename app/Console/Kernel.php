@@ -17,6 +17,7 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\SyncDayliShopifyCustomers::class,
         \App\Console\Commands\ImportMilkCsv::class,
         \App\Console\Commands\GenerateDailyOrders::class, // ✅ ADD THIS
+        \App\Console\Commands\OutboxWorkCommand::class,   // ✅ ADD THIS
     ];
     /**
      * Define the application's command schedule.
@@ -36,6 +37,11 @@ class Kernel extends ConsoleKernel
         // ✅ Production: auto-create daily pending orders at 5:00 AM
         $schedule->command('dayli:generate-daily-orders')
             ->dailyAt('05:00')
+            ->withoutOverlapping();
+
+        // ✅ Outbox worker
+        $schedule->command('outbox:work --limit=100')
+            ->everyMinute()
             ->withoutOverlapping();
     }
 
