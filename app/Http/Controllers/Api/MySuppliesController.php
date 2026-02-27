@@ -321,6 +321,34 @@ class MySuppliesController extends Controller
             })->values();
         }
 
+
+        // ---------------------------------------------------------
+        // ✅ 4.5) Load order_items qty map (override draft qty)
+        // ---------------------------------------------------------
+        $orderIds = $ordersMap->map(fn($o) => (int) ($o->id ?? 0))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $orderItemsMap = collect(); // order_id => (product_id|variant_id => quantity)
+
+        if (!empty($orderIds)) {
+            $ois = DB::table('order_items')
+                ->select('order_id', 'product_id', 'variant_id', 'quantity')
+                ->whereIn('order_id', $orderIds)
+                ->get();
+
+            $orderItemsMap = $ois
+                ->groupBy('order_id')
+                ->map(function ($items) {
+                    return $items->keyBy(function ($oi) {
+                        $pid = (int) ($oi->product_id ?? 0);
+                        $vid = (int) ($oi->variant_id ?? 0);
+                        return $pid . '|' . $vid;
+                    });
+                });
+        }
         // ---------------------------------------------------------
         // 5) Load item+product details like MyWorkOrders
         // ---------------------------------------------------------
@@ -333,7 +361,7 @@ class MySuppliesController extends Controller
             ->get()
             ->keyBy('id');
 
-        $rows = collect($ids)->map(function ($id) use ($items, $customerMap, $ordersMap) {
+        $rows = collect($ids)->map(function ($id) use ($items, $customerMap, $ordersMap, $orderItemsMap) {
             $item = $items->get($id);
             $c    = $customerMap->get($id);
 
@@ -341,6 +369,13 @@ class MySuppliesController extends Controller
 
             $doId = (int) ($c->draft_order_id ?? 0);
             $o    = $ordersMap->get($doId);
+
+            $oiQty = null;
+            if ($o) {
+                $key = ((int)$item->product_id) . '|' . ((int)$item->variant_id);
+                $oi = data_get($orderItemsMap, ((int)$o->id) . '.' . $key);
+                if ($oi) $oiQty = (float) $oi->quantity;
+            }
 
             return [
                 'draft_order_item_id' => (int) $item->id,
@@ -362,7 +397,7 @@ class MySuppliesController extends Controller
                 'product_title'       => optional($item->product)->title ?? 'Product',
                 'image_url'           => optional($item->product)->img_src ?? '',
 
-                'qty'                 => (float) $item->qty,
+                'qty' => $oiQty !== null ? $oiQty : (float) $item->qty,
                 'unit'                => $item->unit,
                 'price_snapshot'      => $item->price_snapshot,
                 'frequency_type'      => $item->frequency_type,
@@ -519,7 +554,7 @@ class MySuppliesController extends Controller
         // ✅ Always validate items
         $request->validate([
             'items'            => 'required|array|min:1',
-            'items.*.quantity' => 'required|integer|min:1|max:9999',
+            'items.*.quantity' => 'required|integer|min:0|max:9999',
             'delivery_date' => 'nullable|date',
         ]);
 
@@ -620,6 +655,62 @@ class MySuppliesController extends Controller
                 $img     = $item['image_url'] ?? null;
 
                 $qty = (int) ($item['quantity'] ?? 1);
+                // ✅ if qty = 0 keep row in order_items (do NOT delete)
+                if ($qty === 0) {
+
+                    $oiQuery = \App\Models\OrderItem::where('order_id', $order->id);
+
+                    if (!empty($pid)) {
+                        $oiQuery->where('product_id', $pid);
+                        if (!empty($vid)) $oiQuery->where('variant_id', $vid);
+                        else $oiQuery->whereNull('variant_id');
+                    } else {
+                        $oiQuery->where('title', $title);
+                        if (!empty($variant)) $oiQuery->where('variant', $variant);
+                    }
+
+                    $oi = $oiQuery->first();
+
+                    if ($oi) {
+                        $meta = $oi->meta ?? [];
+                        if (!is_array($meta)) $meta = (array)$meta;
+
+                        $meta['skipped'] = true;
+                        $meta['updated_by'] = 'my_supplies_save';
+                        $meta['updated_at'] = now()->toDateTimeString();
+                        $meta['source'] = $item['source'] ?? ($meta['source'] ?? null);
+
+                        $oi->meta = $meta;
+                        $oi->quantity = 0;
+                        $oi->unit_price = 0;
+                        $oi->line_total = 0;
+                        $oi->title = $title;
+                        $oi->variant = $variant;
+                        $oi->image_url = $img;
+                        $oi->actuals_date = $deliveryDate;
+                        $oi->save();
+                    } else {
+                        \App\Models\OrderItem::create([
+                            'order_id'     => $order->id,
+                            'product_id'   => $pid,
+                            'variant_id'   => $vid,
+                            'title'        => $title,
+                            'variant'      => $variant,
+                            'image_url'    => $img,
+                            'quantity'     => 0,
+                            'unit_price'   => 0,
+                            'line_total'   => 0,
+                            'actuals_date' => $deliveryDate,
+                            'meta'         => [
+                                'created_by' => 'my_supplies_save',
+                                'source'     => $item['source'] ?? null,
+                                'skipped'    => true,
+                            ],
+                        ]);
+                    }
+
+                    continue;
+                }
 
                 $unitPrice = 0;
                 $lineTotal = 0;

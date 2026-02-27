@@ -147,12 +147,17 @@ class SubscriptionSelectionController extends Controller
              */
             $grouped = $items->groupBy(function ($row) {
                 $row = (array) $row;
-                return ((int) $row['subscription_type_id']) . '|' . ((int) $row['sub_type_id']);
+                return (int) $row['subscription_type_id'];
             });
 
             $draftOrders = [];
 
             foreach ($grouped as $groupKey => $rows) {
+                $subTypeIds = $rows->pluck('sub_type_id')
+                    ->map(fn($x) => (int) $x)
+                    ->unique()
+                    ->values()
+                    ->all();
                 $first = (array) $rows->first();
 
                 $subscriptionTypeId = (int) $first['subscription_type_id'];
@@ -169,18 +174,25 @@ class SubscriptionSelectionController extends Controller
                  */
                 $scr = SubChangeRequest::where('for_user_id', $user->id)
                     ->where('party_type', $partType)
-
                     ->where('subscription_type_id', $subscriptionTypeId)
                     ->whereIn('status', ['pending', 'approved'])
-                    ->where(function ($q) use ($subTypeId) {
-                        // JSON column:
-                        $q->where('subtypes_json->selected_sub_type_id', $subTypeId);
-
-                        // TEXT column alternative (use this INSTEAD of the JSON line above):
-                        // $q->where('subtypes_json', 'like', '%"selected_sub_type_id":'.$subTypeId.'%');
-                    })
                     ->latest('id')
                     ->first();
+                if ($scr) {
+
+                    $existing = json_decode($scr->subtypes_json ?? '[]', true);
+                    if (!is_array($existing)) $existing = [];
+
+                    $existingIds = $existing['selected_sub_type_ids'] ?? [];
+
+                    $merged = array_values(array_unique(array_merge($existingIds, $subTypeIds)));
+
+                    $scr->subtypes_json = json_encode([
+                        'selected_sub_type_ids' => $merged
+                    ]);
+
+                    $scr->save();
+                }
 
                 $draft = null;
 
@@ -206,20 +218,16 @@ class SubscriptionSelectionController extends Controller
                 }
 
                 // If no existing SCR/DraftOrder -> create new
-                if (! $scr || ! $draft) {
+                if (! $scr) {
                     $scr = SubChangeRequest::create([
                         'for_user_id'            => $user->id,
                         'by_user_id'             => $user->id,
-                        'party_type'              => $partType,
-
+                        'party_type'             => $partType,
                         'from_id'                => null,
                         'draft_order_id'         => null,
                         'zone_id'                => $zoneId,
                         'subscription_type_id'   => $subscriptionTypeId,
-                        'subtypes_json'          => json_encode([
-                            'selected_sub_type_id' => $subTypeId,
-                        ]),
-                        'custom_frequency_format' => null,
+                        'subtypes_json'          => json_encode(['selected_sub_type_ids' => $subTypeIds]),
                         'invoice_cycle'          => 'monthly',
                         'change_reason'          => 'self_service',
                         'action'                 => 'create',
@@ -228,15 +236,15 @@ class SubscriptionSelectionController extends Controller
                         'payload'                => null,
                         'meta'                   => ['source' => 'dayli_app'],
                     ]);
+                }
 
+                if (! $draft) {
                     $draft = DraftOrder::create([
                         'change_request_id'      => $scr->id,
                         'customer_id'            => $user->shopify_customer_id ?? null,
                         'vendor_id'              => null,
-                        'zone_id' => $zoneId,
+                        'zone_id'                => $zoneId,
                         'cadence'                => $groupFrequency,
-
-                        'custom_frequency_format' => null,
                         'invoice_cycle'          => 'monthly',
                         'start_date'             => $groupStartDate,
                         'end_date'               => $groupEndDate,
@@ -244,8 +252,6 @@ class SubscriptionSelectionController extends Controller
                         'locked_at'              => null,
                         'timezone'               => 'Asia/Kolkata',
                         'title'                  => 'App selection – ' . $subscriptionTypeId,
-                        'pricing_policy'         => null,
-                        'tax_policy'             => null,
                         'meta'                   => ['source' => 'dayli_app'],
                     ]);
 

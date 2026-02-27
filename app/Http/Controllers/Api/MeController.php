@@ -304,6 +304,27 @@ class MeController extends Controller
             $todayOrdersMap = $todayOrders->groupBy('customer_id')->map(function ($g) {
                 return $g->first();
             });
+
+            // ✅ Pull order_items for these orders (for the selected targetDate)
+            $orderIds = $todayOrdersMap->filter()->pluck('id')->unique()->values()->all();
+
+            $orderItemsMap = collect(); // order_id => (product_id|variant_id => order_item)
+            if (!empty($orderIds)) {
+                $orderItems = OrderItem::query()
+                    ->select('order_id', 'product_id', 'variant_id', 'quantity')
+                    ->whereIn('order_id', $orderIds)
+                    ->get();
+
+                $orderItemsMap = $orderItems
+                    ->groupBy('order_id')
+                    ->map(function ($items) {
+                        return $items->keyBy(function ($oi) {
+                            $pid = (int) ($oi->product_id ?? 0);
+                            $vid = (int) ($oi->variant_id ?? 0); // null => 0
+                            return $pid . '|' . $vid;
+                        });
+                    });
+            }
         }
 
         // ✅ OLD PENDING DATES (for dropdown)
@@ -340,7 +361,7 @@ class MeController extends Controller
             ->get()
             ->keyBy('id');
 
-        $rows = collect($ids)->map(function ($id) use ($items, $customerMap, $todayOrdersMap, $pendingByCustomer) {
+        $rows = collect($ids)->map(function ($id) use ($items, $customerMap, $todayOrdersMap, $pendingByCustomer, $orderItemsMap) {
 
 
 
@@ -352,6 +373,17 @@ class MeController extends Controller
             $customerId   = (int) ($c->customer_id ?? 0);
             $to           = $todayOrdersMap->get($customerId);
             $pendingDates = $pendingByCustomer[$customerId] ?? [];
+
+            // ✅ Override qty with order_items if exists (even if 0)
+            $oiQty = null;
+
+            if ($to) {
+                $key = ((int)$item->product_id) . '|' . ((int)$item->variant_id);
+                $oi = data_get($orderItemsMap, $to->id . '.' . $key);
+                if ($oi) {
+                    $oiQty = (float) $oi->quantity;
+                }
+            }
 
             return [
                 'draft_order_item_id' => (int) $item->id,
@@ -371,7 +403,7 @@ class MeController extends Controller
                 'product_title'       => optional($item->product)->title ?? 'Product',
                 'image_url'           => optional($item->product)->img_src ?? '',
 
-                'qty'                 => (float) $item->qty,
+                'qty' => $oiQty !== null ? $oiQty : (float) $item->qty,
                 'unit'                => $item->unit,
                 'price_snapshot'      => $item->price_snapshot,
                 'frequency_type'      => $item->frequency_type,
@@ -469,7 +501,7 @@ class MeController extends Controller
     {
         $request->validate([
             'draft_order_item_id' => 'required|integer',
-            'qty' => 'required|integer|min:1|max:9999',
+            'qty' => 'required|integer|min:0|max:9999',
         ]);
 
         $item = DB::table('draft_order_items')
@@ -483,16 +515,34 @@ class MeController extends Controller
             ], 404);
         }
 
+        $qty = (int) $request->qty;
+
+        // ✅ ADD THIS BLOCK HERE
+        if ($qty === 0) {
+            DB::table('draft_order_items')
+                ->where('id', $request->draft_order_item_id)
+                ->update([
+                    'qty' => 0,
+                    'status' => 'inactive', // or delete if you prefer
+                    'updated_at' => now(),
+                ]);
+
+            return response()->json([
+                'message' => 'Item set to 0 (inactive)',
+                'qty' => 0,
+            ]);
+        }
+
         DB::table('draft_order_items')
             ->where('id', $request->draft_order_item_id)
             ->update([
-                'qty' => $request->qty,
+                'qty' => $qty,
                 'updated_at' => now(),
             ]);
 
         return response()->json([
             'message' => 'Quantity updated',
-            'qty' => $request->qty,
+            'qty' => $qty,
         ]);
     }
     public function addItemOptions(Request $request)
@@ -555,7 +605,7 @@ class MeController extends Controller
         $request->validate([
             'customer_id' => 'required|integer',
             'items'       => 'required|array|min:1',
-            'items.*.quantity' => 'required|integer|min:1|max:9999',
+            'items.*.quantity' => 'required|integer|min:0|max:9999',
         ]);
 
         $deliveryDate = $request->input('delivery_date')
@@ -606,6 +656,7 @@ class MeController extends Controller
             // 3️⃣ Upsert order items (update qty if exists, else create)
             foreach ($request->items as $item) {
 
+
                 $pid = $item['product_id'] ?? null;
                 $vid = $item['variant_id'] ?? null;
 
@@ -614,6 +665,63 @@ class MeController extends Controller
                 $img     = $item['image_url'] ?? null;
 
                 $qty = (int) ($item['quantity'] ?? 1);
+                // ✅ ADD THIS
+
+                if ($qty === 0) {
+
+                    $oiQuery = OrderItem::where('order_id', $order->id);
+
+                    if (!empty($pid)) {
+                        $oiQuery->where('product_id', $pid);
+                        if (!empty($vid)) $oiQuery->where('variant_id', $vid);
+                        else $oiQuery->whereNull('variant_id');
+                    } else {
+                        $oiQuery->where('title', $title);
+                        if (!empty($variant)) $oiQuery->where('variant', $variant);
+                    }
+
+                    $oi = $oiQuery->first();
+
+                    if ($oi) {
+                        $meta = $oi->meta ?? [];
+                        if (!is_array($meta)) $meta = (array)$meta;
+
+                        $meta['skipped'] = true;
+                        $meta['updated_by'] = 'my_work_save';
+                        $meta['updated_at'] = now()->toDateTimeString();
+                        $meta['source'] = $item['source'] ?? ($meta['source'] ?? null);
+
+                        $oi->meta = $meta;
+                        $oi->quantity = 0;
+                        $oi->unit_price = 0;
+                        $oi->line_total = 0;
+                        $oi->title = $title;
+                        $oi->variant = $variant;
+                        $oi->image_url = $img;
+                        $oi->actuals_date = $deliveryDate;
+                        $oi->save();
+                    } else {
+                        OrderItem::create([
+                            'order_id'     => $order->id,
+                            'product_id'   => $pid,
+                            'variant_id'   => $vid,
+                            'title'        => $title,
+                            'variant'      => $variant,
+                            'image_url'    => $img,
+                            'quantity'     => 0,
+                            'unit_price'   => 0,
+                            'line_total'   => 0,
+                            'actuals_date' => $deliveryDate,
+                            'meta'         => [
+                                'created_by' => 'my_work_save',
+                                'source'     => $item['source'] ?? null,
+                                'skipped'    => true,
+                            ],
+                        ]);
+                    }
+
+                    continue; // ✅ IMPORTANT
+                }
 
                 $unitPrice = 0;
                 $lineTotal = 0;
