@@ -31,7 +31,6 @@ class OtpAuthController extends Controller
                 'errors'  => $v->errors(),
             ], 422);
         }
-
         $rawPhone = $request->input('phone');      // what user typed
         $digits   = preg_replace('/\D+/', '', $rawPhone);   // only numbers
 
@@ -53,7 +52,6 @@ class OtpAuthController extends Controller
             ->orWhere('phone_normalized', $plus91)
             ->first();
 
-
         // 🔥 IF NOT FOUND → CREATE NEW USER
         if (! $customer) {
             $customer = new User();
@@ -63,10 +61,10 @@ class OtpAuthController extends Controller
             $customer->email        = null;
             $customer->password     = bcrypt(Str::random(32));
             $customer->save();
-            // ✅ Assign default customer role if not assigned
-            if (method_exists($customer, 'assignRole') && $customer->getRoleNames()->isEmpty()) {
-                $customer->assignRole('customer');
-            }
+            // // ✅ Assign default customer role if not assigned
+            // if (method_exists($customer, 'assignRole') && $customer->getRoleNames()->isEmpty()) {
+            //     $customer->assignRole('customer');
+            // }
         }
 
         // 2️⃣ GENERATE OTP (SERVER-SIDE)
@@ -195,9 +193,28 @@ class OtpAuthController extends Controller
             }
         }
 
-        // ✅ Ensure user has at least customer role
+        // ✅ Assign role from request (Flutter sends role)
+        // allowed: customer | vendor | vendor-* | workman | workman-*
+        $requestedRole = strtolower(trim((string) (
+            $request->input('role') ??
+            $request->input('signup_type') ??
+            'customer'
+        )));
+
+        $allowed =
+            $requestedRole === 'customer' ||
+            $requestedRole === 'vendor' ||
+            str_starts_with($requestedRole, 'vendor-') ||
+            $requestedRole === 'workman' ||
+            str_starts_with($requestedRole, 'workman-');
+
+        if (!$allowed) {
+            $requestedRole = 'customer';
+        }
+
         if (method_exists($user, 'assignRole') && $user->getRoleNames()->isEmpty()) {
-            $user->assignRole('customer');
+            $roleExists = DB::table('roles')->where('name', $requestedRole)->exists();
+            $user->assignRole($roleExists ? $requestedRole : 'customer');
         }
 
         // 3️⃣ ISSUE SANCTUM TOKEN FOR THIS USER

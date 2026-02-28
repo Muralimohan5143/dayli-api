@@ -823,24 +823,28 @@ class MySuppliesController extends Controller
                     'event_type'     => 'vendor_supply_entered',
                     'aggregate_type' => 'order',
                     'aggregate_id'   => $order->id,
-                    'user_id'        => $vendorId,
-                    'payload'        => json_encode([
-                        'vendor_id'     => $vendorId,
-                        'order_id'      => $order->id,
-                        'delivery_date' => $deliveryDate,
-                        'zone_id'       => $order->zone_id,
-                        'source'        => 'dayli_app',
-                    ], JSON_UNESCAPED_UNICODE),
+
+                    // ✅ Correct column name
+                    'scheduled_at'   => now(),
+
+                    'payload'        => DB::raw(
+                        "JSON_OBJECT(
+                'vendor_id', {$vendorId},
+                'order_id', {$order->id},
+                'delivery_date', '{$deliveryDate}',
+                'zone_id', " . ($order->zone_id ?? 'NULL') . ",
+                'source', 'dayli_app'
+            )"
+                    ),
 
                     'status'        => 'pending',
                     'attempts'      => 0,
-                    'max_attempts'  => 12,
-                    'available_at'  => now(),
+                    'max_attempts'  => 10,
+
                     'updated_at'    => now(),
                     'created_at'    => now(),
                 ]
             );
-
 
             return response()->json([
                 'order_id'        => $order->id,

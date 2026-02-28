@@ -17,7 +17,7 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\SyncDayliShopifyCustomers::class,
         \App\Console\Commands\ImportMilkCsv::class,
         \App\Console\Commands\GenerateDailyOrders::class, // ✅ ADD THIS
-        \App\Console\Commands\OutboxWorkCommand::class,   // ✅ ADD THIS
+        \App\Console\Commands\OpsDispatchDueEvents::class, // ✅ ADD THIS
     ];
     /**
      * Define the application's command schedule.
@@ -39,10 +39,11 @@ class Kernel extends ConsoleKernel
             ->dailyAt('05:00')
             ->withoutOverlapping();
 
-        // ✅ Outbox worker
-        $schedule->command('outbox:work --limit=100')
+
+
+        $schedule->command('ops:dispatch-due --batch=50 --lock-ttl=10')
             ->everyMinute()
-            ->withoutOverlapping();
+            ->withoutOverlapping(1); // 1 minute overlap lock
     }
 
     /**
