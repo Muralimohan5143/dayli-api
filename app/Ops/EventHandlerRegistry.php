@@ -19,6 +19,9 @@ class EventHandlerRegistry
             // 🔥 ADD THIS LINE
             'vendor_supply_entered' => \App\Ops\Handlers\VendorSupplyReconcileHandler::class,
 
+            // ✅ ADD THESE TWO
+            'recon.daily_zone'            => \App\Ops\Handlers\DailyZoneReconcileHandler::class,
+            'daily_zone_reconcile'        => \App\Ops\Handlers\DailyZoneReconcileHandler::class,
 
             // shopify
             'sync.shopify.customer_zonecode_push' => \App\Ops\Handlers\ShopifyZonecodePushHandler::class,
