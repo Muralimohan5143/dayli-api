@@ -14,12 +14,11 @@ class EventHandlerRegistry
     {
         $this->map = [
             // reconciliation
-            'recon.vendor_supply_entered' => \App\Ops\Handlers\VendorSupplyReconcileHandler::class,
-
-            // 🔥 ADD THIS LINE
-            'vendor_supply_entered' => \App\Ops\Handlers\VendorSupplyReconcileHandler::class,
+            // 'recon.vendor_supply_entered' => \App\Ops\Handlers\VendorSupplyReconcileHandler::class,
+            // 'vendor_supply_entered' => \App\Ops\Handlers\DailyZoneReconcileHandler::class,
 
             // ✅ ADD THESE TWO
+            'vendor_supply_entered' => \App\Ops\Handlers\DailyZoneReconcileHandler::class,
             'recon.daily_zone'            => \App\Ops\Handlers\DailyZoneReconcileHandler::class,
             'daily_zone_reconcile'        => \App\Ops\Handlers\DailyZoneReconcileHandler::class,
 

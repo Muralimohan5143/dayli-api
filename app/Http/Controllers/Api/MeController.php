@@ -839,6 +839,33 @@ class MeController extends Controller
             $order->delivered_by    = Auth::id();
             $order->save();
 
+            // ✅ Trigger daily zone reconciliation after delivery save
+            DB::table('outbox_events')->updateOrInsert(
+                [
+                    'idempotency_key' => "recon.daily_zone:zone:{$order->zone_id}:date:{$order->delivery_date}",
+                ],
+                [
+                    'event_type'     => 'recon.daily_zone',
+                    'aggregate_type' => 'order',
+                    'aggregate_id'   => $order->id,
+                    'scheduled_at'   => now(),
+                    'payload'        => DB::raw(
+                        "JSON_OBJECT(
+                'zone_id', " . ($order->zone_id ?? 'NULL') . ",
+                'delivery_date', '{$order->delivery_date}',
+                'order_id', {$order->id},
+                'delivered_by', " . (Auth::id() ?? 'NULL') . ",
+                'source', 'dayli_app'
+            )"
+                    ),
+                    'status'       => 'pending',
+                    'attempts'     => 0,
+                    'max_attempts' => 10,
+                    'updated_at'   => now(),
+                    'created_at'   => now(),
+                ]
+            );
+
 
             return response()->json([
                 'order_id'        => $order->id,
