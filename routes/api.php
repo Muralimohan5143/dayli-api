@@ -18,6 +18,8 @@ use App\Http\Controllers\Api\ZoneApiController;
 use App\Http\Controllers\Api\AdminBillingController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\SesWebhookController;
+use App\Http\Controllers\Api\DeviceTokenController;
+use App\Services\FcmService;
 
 /*
 |--------------------------------------------------------------------------
@@ -65,6 +67,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', fn(Request $request) => $request->user());
     Route::get('/me', [MeController::class, 'show']);
     Route::post('/profile/service', [ProfileController::class, 'saveServiceProfile']);
+
+    // Device tokens (Push notifications)
+    Route::post('/device-tokens', [DeviceTokenController::class, 'store']);
 
     // --------------------------
     // Orders
@@ -156,5 +161,27 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/{id}/complete', [MySuppliesController::class, 'complete']);
 
         Route::get('/all-products', [MySuppliesController::class, 'allProducts']);
+    });
+
+    Route::post('/push/test', function (Request $request) {
+        $user = $request->user();
+
+        $tokenRow = \App\Models\DeviceToken::where('user_id', $user->id)
+            ->where('is_valid', true)
+            ->latest()
+            ->firstOrFail();
+
+        $payload = [
+            'title' => 'Dayli Test',
+            'body'  => 'Push working ✅',
+            'data'  => [
+                'type' => 'test',
+                'entity_id' => '0',
+            ],
+        ];
+
+        $res = app(\App\Services\FcmService::class)->sendToToken($tokenRow->token, $payload);
+
+        return response()->json(['ok' => true, 'fcm' => $res]);
     });
 });

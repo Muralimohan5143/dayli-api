@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use App\Jobs\SendPushToUserJob;
 
 class MySuppliesController extends Controller
 {
@@ -846,6 +847,17 @@ class MySuppliesController extends Controller
                 ]
             );
 
+
+            // send push notification
+            SendPushToUserJob::dispatch($customerId, [
+                'title' => 'Delivery Update',
+                'body'  => 'Your order #' . $order->id . ' has been delivered',
+                'data'  => [
+                    'type' => 'order',
+                    'entity_id' => (string) $order->id,
+                    'deeplink' => 'dayli://orders/' . $order->id,
+                ],
+            ])->onQueue('ops');
             return response()->json([
                 'order_id'        => $order->id,
                 'status'          => $isNew ? 'created' : 'updated',

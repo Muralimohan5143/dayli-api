@@ -10,6 +10,7 @@ use App\Models\DraftOrderItem;
 use App\Models\Order;
 use App\Models\OrderItem;
 use Illuminate\Support\Facades\Auth;
+use App\Jobs\SendPushToUserJob;
 
 
 class MeController extends Controller
@@ -866,6 +867,16 @@ class MeController extends Controller
                 ]
             );
 
+            SendPushToUserJob::dispatch((int)$order->customer_id, [
+                'title' => 'Order Delivered',
+                'body'  => 'Your order #' . $order->id . ' has been delivered',
+                'data'  => [
+                    'type' => 'order',
+                    'entity_id' => (string) $order->id,
+                    'deeplink' => 'dayli://orders/' . $order->id,
+                    'delivery_date' => (string) $order->delivery_date,
+                ],
+            ])->onQueue('ops');
 
             return response()->json([
                 'order_id'        => $order->id,
