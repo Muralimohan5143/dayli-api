@@ -849,15 +849,17 @@ class MySuppliesController extends Controller
 
 
             // send push notification
-            SendPushToUserJob::dispatch($customerId, [
-                'title' => 'Delivery Update',
-                'body'  => 'Your order #' . $order->id . ' has been delivered',
-                'data'  => [
-                    'type' => 'order',
-                    'entity_id' => (string) $order->id,
-                    'deeplink' => 'dayli://orders/' . $order->id,
-                ],
-            ])->onQueue('ops');
+            DB::afterCommit(function () use ($customerId, $order) {
+                SendPushToUserJob::dispatch($customerId, [
+                    'title' => 'Supply Update',
+                    'body'  => 'Vendor updated items for order #' . $order->id,
+                    'data'  => [
+                        'type' => 'order',
+                        'entity_id' => (string) $order->id,
+                        'deeplink' => 'dayli://orders/' . $order->id,
+                    ],
+                ])->onQueue('ops');
+            });
             return response()->json([
                 'order_id'        => $order->id,
                 'status'          => $isNew ? 'created' : 'updated',

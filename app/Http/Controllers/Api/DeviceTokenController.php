@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\DeviceToken;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class DeviceTokenController extends Controller
 {
@@ -30,6 +31,19 @@ class DeviceTokenController extends Controller
                 'is_valid' => true,
             ]
         );
+
+
+        // 🔎 DEBUG LOG (ADD THIS BLOCK)
+        $row = DeviceToken::where('token', $data['token'])->first();
+
+        Log::info('DEVICE_TOKEN_AFTER_SAVE', [
+            'id' => $row?->id,
+            'user_id' => $row?->user_id,
+            'is_valid_cast' => $row?->is_valid,
+            'is_valid_raw' => $row?->getRawOriginal('is_valid'),
+            'device_id' => $row?->device_id,
+            'platform' => $row?->platform,
+        ]);
 
         return response()->json(['ok' => true]);
     }

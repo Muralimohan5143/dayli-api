@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\DeviceToken;
 use Google\Auth\Credentials\ServiceAccountCredentials;
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class FcmService
@@ -30,6 +32,11 @@ class FcmService
         return $tokenArr['access_token'];
     }
 
+    /**
+     * Sends to exactly ONE token.
+     * Returns decoded JSON on success.
+     * Throws RequestException on HTTP errors (401/403/404/400 etc).
+     */
     public function sendToToken(string $token, array $payload): array
     {
         $projectId = config('services.fcm.project_id');
@@ -40,14 +47,10 @@ class FcmService
         $body = [
             'message' => [
                 'token' => $token,
-
-                // Show in tray (optional but typical)
                 'notification' => [
                     'title' => (string)($payload['title'] ?? ''),
-                    'body' => (string)($payload['body'] ?? ''),
+                    'body'  => (string)($payload['body'] ?? ''),
                 ],
-
-                // For app routing
                 'data' => array_map('strval', array_merge([
                     'notification_id' => $notificationId,
                     'ts' => (string) time(),
@@ -58,7 +61,7 @@ class FcmService
         $res = $this->http->post($url, [
             'headers' => [
                 'Authorization' => 'Bearer ' . $this->accessToken(),
-                'Content-Type' => 'application/json',
+                'Content-Type'  => 'application/json',
             ],
             'json' => $body,
         ]);
@@ -66,31 +69,84 @@ class FcmService
         return json_decode((string)$res->getBody(), true) ?? [];
     }
 
-    public function sendToUser(int $userId, array $payload): array
+    /**
+     * Send to MANY tokens (given list).
+     * - Logs real FCM error body
+     * - Marks token invalid ONLY for token-dead errors
+     */
+    public function sendToTokens(array $tokens, array $payload): array
     {
-        $tokens = DeviceToken::query()
-            ->where('user_id', $userId)
-            ->where('is_valid', true)
-            ->pluck('token')
-            ->all();
-
         $ok = 0;
         $fail = 0;
+        $errors = [];
 
         foreach ($tokens as $t) {
             try {
                 $this->sendToToken($t, $payload);
                 $ok++;
-            } catch (\Throwable $e) {
+            } catch (RequestException $e) {
                 $fail++;
 
-                // If token invalid, mark it (FCM returns 404/400 in some cases)
-                // Keep it simple: mark invalid on any 404-like message.
-                // You can improve by parsing $e->getMessage() / response body.
-                DeviceToken::where('token', $t)->update(['is_valid' => false]);
+                $status = $e->getResponse()?->getStatusCode();
+                $rawBody = $e->getResponse() ? (string) $e->getResponse()->getBody() : null;
+                $decoded = $rawBody ? json_decode($rawBody, true) : null;
+
+                // Log the REAL reason from FCM
+                Log::warning('FCM_SEND_FAILED', [
+                    'token_prefix' => substr((string)$t, 0, 25),
+                    'http_status'  => $status,
+                    'body'         => $decoded ?? $rawBody,
+                ]);
+
+                $fcmStatus = $decoded['error']['status'] ?? null;
+                $fcmMessage = $decoded['error']['message'] ?? null;
+
+                $errors[] = [
+                    'http_status' => $status,
+                    'fcm_status'  => $fcmStatus,
+                    'message'     => $fcmMessage,
+                ];
+
+                // ✅ Mark invalid ONLY for token-dead cases
+                // v1 commonly returns 404 NOT_FOUND for unregistered/invalid token
+                $tokenDead =
+                    ($status === 404) ||
+                    ($fcmStatus === 'NOT_FOUND') ||
+                    ($fcmStatus === 'UNREGISTERED') ||
+                    // sometimes invalid token format hits INVALID_ARGUMENT
+                    (($status === 400 || $fcmStatus === 'INVALID_ARGUMENT') && is_string($fcmMessage) && str_contains(strtolower($fcmMessage), 'registration token'));
+
+                if ($tokenDead) {
+                    DeviceToken::where('token', $t)->update(['is_valid' => false]);
+                }
+            } catch (\Throwable $e) {
+                $fail++;
+                Log::error('FCM_SEND_EXCEPTION', [
+                    'token_prefix' => substr((string)$t, 0, 25),
+                    'msg' => $e->getMessage(),
+                ]);
+
+                // ❌ DO NOT mark invalid here (could be timeout/etc)
             }
         }
 
-        return ['ok' => $ok, 'fail' => $fail, 'total' => count($tokens)];
+        return [
+            'ok' => $ok,
+            'fail' => $fail,
+            'total' => count($tokens),
+            'errors' => $errors,
+        ];
+    }
+
+    public function sendToUser(int $userId, array $payload): array
+    {
+        $tokens = DeviceToken::query()
+            ->where('user_id', $userId)
+            ->where('is_valid', 1)
+            ->orderByDesc('id')
+            ->pluck('token')
+            ->all();
+
+        return $this->sendToTokens($tokens, $payload);
     }
 }
