@@ -13,6 +13,10 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class ImportSheetSubscriptions extends Command
 {
+
+
+    // command for insert SCR + Draft Orders + Orders + Order Items from sheet with columns: phone=Phone Number, start_date=Start Date, milk=Milk Name (e.g., Vijaya Gold Milk), ask_count=Base Qty (optional, default 1), day_1..day_31=Day-specific qty (optional). The command will group rows by phone number, create one SCR per user, one Draft Order per SCR, and multiple Orders/Order Items based on the day columns. Use --dry-run to preview the mapping without DB writes. Always backup your database before running imports.
+    //php artisan import:sheet-subscriptions "C:\Users\mandl\work\flutter projects\orders_users.xlsx" --dry-run --by=1 --default-zone=1 --order-status=draft --month=03 --year=2026
     protected $signature = 'import:sheet-subscriptions
         {xlsx_path : Full path to XLSX}
         {--dry-run : Do not write to DB}

@@ -212,11 +212,14 @@ class OtpAuthController extends Controller
             $requestedRole = 'customer';
         }
 
-        if (method_exists($user, 'assignRole') && $user->getRoleNames()->isEmpty()) {
+        if (method_exists($user, 'assignRole')) {
             $roleExists = DB::table('roles')->where('name', $requestedRole)->exists();
-            $user->assignRole($roleExists ? $requestedRole : 'customer');
-        }
+            $finalRole = $roleExists ? $requestedRole : 'customer';
 
+            if (! $user->hasRole($finalRole)) {
+                $user->assignRole($finalRole);
+            }
+        }
         // 3️⃣ ISSUE SANCTUM TOKEN FOR THIS USER
         $token = $user->createToken('dayli-mobile')->plainTextToken;
 

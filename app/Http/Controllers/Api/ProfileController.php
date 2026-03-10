@@ -18,6 +18,11 @@ class ProfileController extends Controller
             'address'   => 'required|string|max:500',
             'latitude'  => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
+
+            // NEW
+            'service_handle' => 'nullable|string',
+            'subscription_type_id' => 'nullable|integer',
+            'zone_id' => 'nullable|integer'
         ]);
 
         $user = $request->user(); // ✅ existing user from token
@@ -33,6 +38,32 @@ class ProfileController extends Controller
             $user->address = $data['address'];
 
             $user->save();
+
+            // ==========================
+            // Delivery boy assignment
+            // ==========================
+
+            if (($data['service_handle'] ?? null) === 'workman-delivery-boy') {
+
+                if (! $user->hasRole('workman-delivery-boy')) {
+                    $user->assignRole('workman-delivery-boy');
+                }
+
+                DB::table('delivery_tasks')->updateOrInsert(
+                    [
+                        'delivery_exec_id' => $user->id,
+                        'subscription_type_id' => $data['subscription_type_id'] ?? null,
+                    ],
+                    [
+                        'delivery_task' => 'Delivery Assignment',
+                        'zone_id' => $data['zone_id'] ?? 1,
+                        'status' => 'today',
+                        'start_date' => now()->toDateString(),
+                        'updated_at' => now(),
+                        'created_at' => now(),
+                    ]
+                );
+            }
 
             // ✅ addresses table is polymorphic + has line1, lat, lng
             DB::table('addresses')->updateOrInsert(

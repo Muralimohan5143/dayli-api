@@ -26,8 +26,12 @@ class MobileController extends Controller
     public function getServiceTypes(Request $request)
     {
         $serviceTypes = DB::table('services')
-            ->select('service_id as id', 'title as name')
-            ->where('is_active', '1')
+            ->select(
+                'service_id as id',
+                'title as name',
+                'handle'
+            )
+            ->where('is_active', 1)
             ->get();
 
         return response()->json([
@@ -52,6 +56,20 @@ class MobileController extends Controller
         return response()->json([
             'status' => true,
             'data'   => $subTypes,
+        ]);
+    }
+
+
+    public function getSubscriptionTypes(Request $request)
+    {
+        $types = DB::table('subscription_types')
+            ->select('id', 'name', 'slug')
+            ->where('status', 'active')
+            ->get();
+
+        return response()->json([
+            'status' => true,
+            'data'   => $types,
         ]);
     }
 

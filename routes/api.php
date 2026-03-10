@@ -44,6 +44,7 @@ Route::post('/ses/feedback', [SesWebhookController::class, 'handle']);
 Route::get('/subscriptions', [MobileController::class, 'getSubscriptions']);
 Route::get('/service-types', [MobileController::class, 'getServiceTypes']);
 Route::get('/subscription-sub-types/{id}', [MobileController::class, 'getSubscriptionSubTypes']);
+Route::get('/subscription-types', [MobileController::class, 'getSubscriptionTypes']);
 
 Route::get('/products/{subTypeId}', [MobileController::class, 'productsBySubType']);
 Route::get('/products/{productId}/variants', [MobileController::class, 'productVariants']);

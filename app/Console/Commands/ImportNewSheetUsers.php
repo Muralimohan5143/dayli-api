@@ -19,6 +19,11 @@ class ImportNewSheetUsers extends Command
         {--dedupe=first : first|last (for duplicates in file)}
     ';
 
+
+    // this file is for importing UNIQUE users from a sheet with columns: display_name/name=Name, phone=Phone Number, address=Address Full (into users table only). It does not handle orders or other related data. Use with --dry-run first to verify column mapping and data parsing. For large files, consider splitting into smaller chunks. Always backup your database before running imports.
+
+    //command for insert users table
+    // php artisan import:new-sheet-users "C:\Users\mandl\work\flutter projects\users_updated.xlsx" --default-zone=1
     protected $description = "Import UNIQUE users from sheet: display_name/name=Name, phone=Phone Number, address=Address Full (into users table only).";
 
     public function handle(): int
