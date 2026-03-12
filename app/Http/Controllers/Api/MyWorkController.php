@@ -159,6 +159,7 @@ class MyWorkController extends Controller
         $q = DB::table('draft_order_items as doi')
             ->join('draft_orders as do', 'do.id', '=', 'doi.draft_order_id')
             ->join('sub_change_requests as scr', 'scr.id', '=', 'do.change_request_id')
+            ->where('scr.party_type', 'consumer')   // ✅ ADD THIS
             ->where('scr.zone_id', $zoneId)
             ->where('scr.status', 'approved')
             ->where(function ($w) {
@@ -227,6 +228,7 @@ class MyWorkController extends Controller
             ->join('draft_orders as do', 'do.id', '=', 'doi.draft_order_id')
             ->join('sub_change_requests as scr', 'scr.id', '=', 'do.change_request_id')
             ->join('users as u', 'u.id', '=', 'scr.for_user_id')
+            ->where('scr.party_type', 'consumer')   // ✅ ADD THIS
             ->where('scr.zone_id', $zoneId)
             ->where('scr.subscription_type_id', $subTypeId)
             ->where('scr.status', 'approved')

@@ -176,6 +176,7 @@ class MeController extends Controller
             })
             ->join('roles as r', 'r.id', '=', 'mhr.role_id')
             ->where('r.name', 'customer')
+            ->where('scr.party_type', 'consumer')   // ✅ ADD THIS
 
             ->where('scr.zone_id', $zoneId)
             ->where('scr.subscription_type_id', $subTypeId)

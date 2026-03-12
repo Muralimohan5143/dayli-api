@@ -38,6 +38,16 @@ class ProfileController extends Controller
             $user->address = $data['address'];
 
             $user->save();
+            // ==========================
+            // Vendor assignment
+            // ==========================
+            if (($data['service_handle'] ?? null) === 'vendor') {
+
+                if (! $user->hasRole('vendor')) {
+                    $user->assignRole('vendor');
+                }
+            }
+
 
             // ==========================
             // Delivery boy assignment

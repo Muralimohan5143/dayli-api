@@ -195,29 +195,10 @@ class OtpAuthController extends Controller
 
         // ✅ Assign role from request (Flutter sends role)
         // allowed: customer | vendor | vendor-* | workman | workman-*
-        $requestedRole = strtolower(trim((string) (
-            $request->input('role') ??
-            $request->input('signup_type') ??
-            'customer'
-        )));
-
-        $allowed =
-            $requestedRole === 'customer' ||
-            $requestedRole === 'vendor' ||
-            str_starts_with($requestedRole, 'vendor-') ||
-            $requestedRole === 'workman' ||
-            str_starts_with($requestedRole, 'workman-');
-
-        if (!$allowed) {
-            $requestedRole = 'customer';
-        }
-
+        // Always assign customer role after OTP
         if (method_exists($user, 'assignRole')) {
-            $roleExists = DB::table('roles')->where('name', $requestedRole)->exists();
-            $finalRole = $roleExists ? $requestedRole : 'customer';
-
-            if (! $user->hasRole($finalRole)) {
-                $user->assignRole($finalRole);
+            if (! $user->hasRole('customer')) {
+                $user->assignRole('customer');
             }
         }
         // 3️⃣ ISSUE SANCTUM TOKEN FOR THIS USER
