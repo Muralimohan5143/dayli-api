@@ -181,4 +181,40 @@ class User extends Authenticatable
             $this->phone = preg_replace('/[^\d+]/', '', $value);
         }
     }
+    public function userServices()
+    {
+        return $this->hasMany(\App\Models\UserService::class);
+    }
+
+    public function approvedUserServices()
+    {
+        return $this->hasMany(\App\Models\UserService::class)->where('status', 'approved');
+    }
+
+    public function hasApprovedService(string $roleName, ?string $serviceHandle = null): bool
+    {
+        return $this->userServices()
+            ->where('role_name', $roleName)
+            ->when($serviceHandle !== null, function ($q) use ($serviceHandle) {
+                $q->where('service_handle', $serviceHandle);
+            })
+            ->where('status', 'approved')
+            ->where('is_active', true)
+            ->exists();
+    }
+
+    public function getApprovedService(?string $roleName = null, ?string $serviceHandle = null)
+    {
+        return $this->userServices()
+            ->when($roleName !== null, function ($q) use ($roleName) {
+                $q->where('role_name', $roleName);
+            })
+            ->when($serviceHandle !== null, function ($q) use ($serviceHandle) {
+                $q->where('service_handle', $serviceHandle);
+            })
+            ->where('status', 'approved')
+            ->where('is_active', true)
+            ->latest('id')
+            ->first();
+    }
 }

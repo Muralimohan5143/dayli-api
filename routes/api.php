@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\MySuppliesController; // ✅ ADD (create controller
 use App\Http\Controllers\Api\ZoneApiController;
 use App\Http\Controllers\Api\AdminBillingController;
 use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\UserServiceController;
 use App\Http\Controllers\SesWebhookController;
 use App\Http\Controllers\Api\DeviceTokenController;
 use App\Services\FcmService;
@@ -69,6 +70,19 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [MeController::class, 'show']);
     Route::post('/profile/service', [ProfileController::class, 'saveServiceProfile']);
 
+    // --------------------------
+    // User Services (User side)
+    // --------------------------
+    Route::get('/my-user-services', [UserServiceController::class, 'myServices']);
+
+    Route::prefix('user-services')->group(function () {
+        Route::post('/apply', [UserServiceController::class, 'apply']);
+        Route::post('/{userServiceId}/documents', [UserServiceController::class, 'uploadDocument']);
+        Route::get('/{userServiceId}', [UserServiceController::class, 'show']);
+    });
+
+    Route::delete('/user-service-documents/{documentId}', [UserServiceController::class, 'deleteDocument']);
+
     // Device tokens (Push notifications)
     Route::post('/device-tokens', [DeviceTokenController::class, 'store']);
 
@@ -116,7 +130,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // --------------------------
     // My Work (Delivery Boy)
     // --------------------------
-    Route::prefix('my-work')->group(function () {
+    Route::middleware(['approved.service:workman,delivery-boy'])->prefix('my-work')->group(function () {
         // Screen summary
         Route::get('/summary', [MyWorkController::class, 'summary']);
 
@@ -146,7 +160,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // NOTE: Create controller MySuppliesController with same methods as MyWorkController/MeController flow.
     // Backend must filter supplier side: scr.party_type = 'supplier'
     // --------------------------
-    Route::prefix('my-supplies')->group(function () {
+    Route::middleware(['approved.service:vendor,milk'])->prefix('my-supplies')->group(function () {
         Route::get('/summary', [MySuppliesController::class, 'summary']);
         Route::get('/orders',  [MySuppliesController::class, 'orders']);
 
@@ -185,4 +199,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
         return response()->json(['ok' => true, 'fcm' => $res]);
     });
+});
+
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/admin/user-services', [UserServiceController::class, 'index']);
+    Route::get('/admin/user-services/pending-approvals', [UserServiceController::class, 'pendingApprovals']);
+    Route::post('/admin/user-services/{userServiceId}/approve', [UserServiceController::class, 'approve']);
+    Route::post('/admin/user-services/{userServiceId}/reject', [UserServiceController::class, 'reject']);
 });
