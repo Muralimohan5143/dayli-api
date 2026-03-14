@@ -66,12 +66,24 @@ class UserServiceController extends Controller
             'per_page' => 'nullable|integer|min:1|max:100',
         ]);
 
+        $user = $request->user();
         $perPage = $data['per_page'] ?? 20;
+
+        if (! $user || ! $user->hasAnyRole(['admin', 'zone-manager'])) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Unauthorized',
+            ], 403);
+        }
 
         $query = \App\Models\UserService::query()
             ->with(['user', 'documents'])
             ->whereIn('status', ['pending', 'under_review'])
             ->latest('id');
+
+        if ($user->hasRole('zone-manager')) {
+            $query->where('zone_id', $user->zone_id);
+        }
 
         if (!empty($data['role_name'])) {
             $query->where('role_name', $data['role_name']);
@@ -81,7 +93,7 @@ class UserServiceController extends Controller
             $query->where('service_handle', $data['service_handle']);
         }
 
-        if (!empty($data['zone_id'])) {
+        if (!empty($data['zone_id']) && $user->hasRole('admin')) {
             $query->where('zone_id', $data['zone_id']);
         }
 
@@ -131,7 +143,7 @@ class UserServiceController extends Controller
                 }
             }
 
-            if ($data['role_name'] === 'workman' && ($data['service_handle'] ?? null) === 'delivery-boy') {
+            if ($data['role_name'] === 'workman' && ($data['service_handle'] ?? null) === 'workman-delivery-boy') {
                 if (! $user->hasRole('workman-delivery-boy')) {
                     $user->assignRole('workman-delivery-boy');
                 }
@@ -147,7 +159,7 @@ class UserServiceController extends Controller
                 ],
                 [
                     'status'      => $data['role_name'] === 'customer' ? 'approved' : 'pending',
-                    'is_active'   => true,
+                    'is_active'   => $data['role_name'] === 'customer',
                     'meta'        => $data['meta'] ?? null,
                 ]
             );
@@ -216,6 +228,22 @@ class UserServiceController extends Controller
 
         $userService = \App\Models\UserService::with(['user', 'documents'])->findOrFail($userServiceId);
 
+        $user = $request->user();
+
+        if (! $user || ! $user->hasAnyRole(['admin', 'zone-manager'])) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Unauthorized',
+            ], 403);
+        }
+
+        if ($user->hasRole('zone-manager') && $userService->zone_id != $user->zone_id) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'You can approve only your zone services.',
+            ], 403);
+        }
+
         $requiredDocs = match (true) {
             $userService->role_name === 'vendor' => [
                 'profile_photo',
@@ -223,7 +251,7 @@ class UserServiceController extends Controller
                 'aadhaar_back',
                 'pan_card',
             ],
-            $userService->role_name === 'workman' && $userService->service_handle === 'delivery-boy' => [
+            $userService->role_name === 'workman' && $userService->service_handle === 'workman-delivery-boy' => [
                 'profile_photo',
                 'aadhaar_front',
                 'aadhaar_back',
@@ -270,7 +298,7 @@ class UserServiceController extends Controller
 
             if (
                 $userService->role_name === 'workman' &&
-                $userService->service_handle === 'delivery-boy'
+                $userService->service_handle === 'workman-delivery-boy'
             ) {
                 // optional future logic
                 // create delivery assignment seed row or enable delivery flow
@@ -293,6 +321,22 @@ class UserServiceController extends Controller
         ]);
 
         $userService = \App\Models\UserService::with('documents')->findOrFail($userServiceId);
+
+        $user = $request->user();
+
+        if (! $user || ! $user->hasAnyRole(['admin', 'zone-manager'])) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Unauthorized',
+            ], 403);
+        }
+
+        if ($user->hasRole('zone-manager') && $userService->zone_id != $user->zone_id) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'You can reject only your zone services.',
+            ], 403);
+        }
 
         DB::transaction(function () use ($userService, $request, $data) {
             $userService->update([

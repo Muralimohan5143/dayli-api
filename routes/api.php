@@ -130,7 +130,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // --------------------------
     // My Work (Delivery Boy)
     // --------------------------
-    Route::middleware(['approved.service:workman,delivery-boy'])->prefix('my-work')->group(function () {
+    Route::middleware(['approved.service:workman,workman-delivery-boy'])->prefix('my-work')->group(function () {
         // Screen summary
         Route::get('/summary', [MyWorkController::class, 'summary']);
 
