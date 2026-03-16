@@ -45,32 +45,79 @@ class MeController extends Controller
             ->whereNotNull('u.zone_id')
             ->update(['scr.zone_id' => DB::raw('u.zone_id')]);
 
-        // ✅ Role slug from Spatie (first role)
+        // ✅ Role slug from Spatie (normalized for app)
         $roleSlug = null;
         $roles = [];
 
         if (method_exists($user, 'getRoleNames')) {
             $roles = $user->getRoleNames()->values()->toArray();
-            $roleSlug = $roles[0] ?? null;
+
+            if (in_array('vendor', $roles, true) || in_array('vendor-milk', $roles, true)) {
+                $roleSlug = 'vendor';
+            } elseif (in_array('workman-delivery-boy', $roles, true) || in_array('workman', $roles, true)) {
+                $roleSlug = 'workman';
+            } elseif (in_array('customer', $roles, true)) {
+                $roleSlug = 'customer';
+            } else {
+                $roleSlug = $roles[0] ?? null;
+            }
         }
 
+
+        $userServices = DB::table('user_services')
+            ->where('user_id', $user->id)
+            ->select(
+                'id',
+                'role_name',
+                'service_handle',
+                'subscription_type_id',
+                'zone_id',
+                'status',
+                'approved_by',
+                'approved_at'
+            )
+            ->orderByDesc('id')
+            ->get();
         return response()->json([
             'id'      => $user->id,
             'name'    => $user->name ?? null,
             'zone_id' => $user->zone_id ?? null,
             'role'    => $roleSlug,
             'roles'   => $roles,
+            'user_services' => $userServices,
         ]);
     }
 
-    private function currentDeliveryTaskForUser(int $userId)
+
+    private function approvedDeliveryServiceForUser(int $userId, int $subscriptionTypeId)
+    {
+        return DB::table('user_services')
+            ->where('user_id', $userId)
+            ->where('role_name', 'workman')
+            ->where('service_handle', 'workman-delivery-boy')
+            ->where('subscription_type_id', $subscriptionTypeId)
+            ->where('status', 'approved')
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    private function activeDeliveryTaskForUserAndType(int $userId, int $subscriptionTypeId)
     {
         return DB::table('delivery_tasks')
             ->where('delivery_exec_id', $userId)
+            ->where('subscription_type_id', $subscriptionTypeId)
             ->whereIn('status', ['today', 'in_progress'])
             ->orderByDesc('id')
             ->first();
     }
+    // private function currentDeliveryTaskForUser(int $userId)
+    // {
+    //     return DB::table('delivery_tasks')
+    //         ->where('delivery_exec_id', $userId)
+    //         ->whereIn('status', ['today', 'in_progress'])
+    //         ->orderByDesc('id')
+    //         ->first();
+    // }
 
     // private function resolveSubscriptionTypeIdFromTask(?string $deliveryTaskTitle): ?int
     // {
@@ -106,39 +153,54 @@ class MeController extends Controller
         $user = $request->user();
         if (!$user) return response()->json(['message' => 'Unauthenticated'], 401);
 
-        // ✅ 1) Find current delivery task for this delivery boy
-        $task = $this->currentDeliveryTaskForUser((int)$user->id);
-        if (!$task) {
-            return response()->json([
-                'message' => 'No active delivery task found for this user',
-                'data' => [],
-            ], 422);
-        }
+        $today = Carbon::today()->toDateString();
 
-        // ✅ zone comes from delivery_tasks
-        $zoneId = (int) $task->zone_id;
-
-        // ✅ 2) subscription_type_id comes from delivery_tasks.subscription_type_id text
-        // ✅ 2) subscription_type_id comes directly from delivery_tasks.subscription_type_id (INT)
-        $subTypeId = (int) ($task->subscription_type_id ?? 0);
-
-        if (!$subTypeId) {
-            return response()->json([
-                'message' => 'Delivery task has no subscription_type_id',
-                'data' => [],
-            ], 422);
-        }
-
-        // ✅ Check requested subscription type from Flutter (left menu click)
+        // ✅ subscription type must come from request now
         $requestedSubTypeId = (int) $request->query('subscription_type_id');
 
-        if ($requestedSubTypeId && $requestedSubTypeId !== $subTypeId) {
+        if ($requestedSubTypeId <= 0) {
             return response()->json([
-                'message' => 'Subscription type not assigned to this delivery task',
+                'message' => 'subscription_type_id is required',
                 'data' => [],
+            ], 422);
+        }
+
+        // ✅ 1) First check approval in user_services
+        $approvedService = $this->approvedDeliveryServiceForUser(
+            (int) $user->id,
+            $requestedSubTypeId
+        );
+
+        if (!$approvedService) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Your service account is not approved yet.',
+                'required_role' => 'workman',
+                'required_service_handle' => 'workman-delivery-boy',
+                'subscription_type_id' => $requestedSubTypeId,
             ], 403);
         }
-        $today = Carbon::today()->toDateString();
+
+        // ✅ subscription type comes from approved user service
+        $subTypeId = $requestedSubTypeId;
+
+        // ✅ 2) delivery task is operational only, not permission
+        $task = $this->activeDeliveryTaskForUserAndType((int) $user->id, $subTypeId);
+
+        // ✅ zone priority: active task zone first, else approved service zone, else user zone
+        $zoneId = (int) (
+            $task->zone_id
+            ?? $approvedService->zone_id
+            ?? $user->zone_id
+            ?? 0
+        );
+
+        if ($zoneId <= 0) {
+            return response()->json([
+                'message' => 'No zone assigned for this approved delivery service',
+                'data' => [],
+            ], 422);
+        }
 
         // ✅ Mode switch for modal dropdowns (pending/done dates)
         $mode = (string) $request->query('mode', '');  // mode=dates
@@ -275,7 +337,7 @@ class MeController extends Controller
 
 
             return response()->json([
-                'delivery_task_id' => (int) $task->id,
+                'delivery_task_id' => $task ? (int) $task->id : 0,
                 'subscription_type_id' => (int) $subTypeId,
                 'zone_id' => (int) $zoneId,
                 'pending_dates' => $pendingDates,
@@ -433,8 +495,8 @@ class MeController extends Controller
         }
 
         return response()->json([
-            'delivery_task_id' => (int) $task->id,
-            'task_subscription_type_id' => (int) $task->subscription_type_id,
+            'delivery_task_id' => $task ? (int) $task->id : 0,
+            'task_subscription_type_id' => $task ? (int) $task->subscription_type_id : 0,
             'subscription_type_id' => (int) $subTypeId,
             'zone_id' => $zoneId,
             'date' => $targetDate,
@@ -449,16 +511,19 @@ class MeController extends Controller
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        $tasks = DB::table('delivery_tasks as dt')
-            ->join('subscription_types as st', 'st.id', '=', 'dt.subscription_type_id')
-            ->where('dt.delivery_exec_id', $user->id)
+        $types = DB::table('user_services as us')
+            ->join('subscription_types as st', 'st.id', '=', 'us.subscription_type_id')
+            ->where('us.user_id', $user->id)
+            ->where('us.role_name', 'workman')
+            ->where('us.service_handle', 'workman-delivery-boy')
+            ->where('us.status', 'approved')
             ->select('st.id', 'st.name', 'st.slug', 'st.img_src')
             ->distinct()
             ->orderBy('st.name')
             ->get();
 
         return response()->json([
-            'data' => $tasks
+            'data' => $types
         ]);
     }
     public function getAddItemProducts(Request $request)
