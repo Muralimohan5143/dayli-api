@@ -38,16 +38,17 @@ class DailyZoneReconcileHandler implements EventHandler
             throw new \RuntimeException('Invalid payload: zone_id required');
         }
 
-        $dateStr = (string) ($payload['delivery_date']
+        $dateStr = (string) (
+            $payload['delivery_date']
             ?? $payload['deliveryDate']
             ?? $payload['date']
-            ?? Carbon::today()->toDateString());
+            ?? Carbon::today()->toDateString()
+        );
 
         $targetDate = Carbon::parse($dateStr)->toDateString();
 
         $subTypeId = (int) ($payload['subscription_type_id'] ?? $payload['subscriptionTypeId'] ?? 0);
 
-        // Default true (recommended) to avoid counting pre-created consumer orders as delivered.
         $deliveredOnly = array_key_exists('delivered_only', $payload)
             ? (bool) $payload['delivered_only']
             : true;
@@ -63,10 +64,14 @@ class DailyZoneReconcileHandler implements EventHandler
             ->whereDate('o.delivery_date', $targetDate)
             ->whereNotIn('o.status', ['cancelled'])
             ->where('scr.party_type', 'supplier')
-            ->select('oi.product_id', DB::raw('MAX(oi.title) as title'), DB::raw('SUM(oi.quantity) as qty'))
-            ->groupBy('oi.product_id');
+            ->select(
+                'oi.product_id',
+                'oi.variant_id',
+                DB::raw('MAX(oi.title) as title'),
+                DB::raw('SUM(oi.quantity) as qty')
+            )
+            ->groupBy('oi.product_id', 'oi.variant_id');
 
-        // Apply subtype only if SCR has it (your table does)
         if ($subTypeId > 0 && DB::getSchemaBuilder()->hasColumn('sub_change_requests', 'subscription_type_id')) {
             $suppliedQ->where('scr.subscription_type_id', $subTypeId);
         }
@@ -74,18 +79,27 @@ class DailyZoneReconcileHandler implements EventHandler
         $suppliedRows = $suppliedQ->get();
 
         $supplied = [];
-        $titles   = [];
+        $titles = [];
         $suppliedTotal = 0.0;
 
         foreach ($suppliedRows as $r) {
-            $pid = (string) ($r->product_id ?? 0);
-            if ($pid === '0') continue;
+            $productId = (int) ($r->product_id ?? 0);
+            $variantId = (int) ($r->variant_id ?? 0);
+
+            if ($productId <= 0) {
+                continue;
+            }
+
+            $key = $productId . '|' . $variantId;
             $qty = (float) ($r->qty ?? 0);
-            $supplied[$pid] = $qty;
+
+            $supplied[$key] = $qty;
             $suppliedTotal += $qty;
 
-            $t = (string) ($r->title ?? '');
-            if ($t !== '') $titles[$pid] = $t;
+            $title = (string) ($r->title ?? '');
+            if ($title !== '') {
+                $titles[$key] = $title;
+            }
         }
 
         // ----------------------------------------
@@ -99,14 +113,18 @@ class DailyZoneReconcileHandler implements EventHandler
             ->whereDate('o.delivery_date', $targetDate)
             ->whereNotIn('o.status', ['cancelled'])
             ->where('scr.party_type', 'consumer')
-            ->select('oi.product_id', DB::raw('MAX(oi.title) as title'), DB::raw('SUM(oi.quantity) as qty'))
-            ->groupBy('oi.product_id');
+            ->select(
+                'oi.product_id',
+                'oi.variant_id',
+                DB::raw('MAX(oi.title) as title'),
+                DB::raw('SUM(oi.quantity) as qty')
+            )
+            ->groupBy('oi.product_id', 'oi.variant_id');
 
         if ($subTypeId > 0 && DB::getSchemaBuilder()->hasColumn('sub_change_requests', 'subscription_type_id')) {
             $deliveredQ->where('scr.subscription_type_id', $subTypeId);
         }
 
-        // If consumer orders exist before delivery, this filter prevents false delivered.
         if ($deliveredOnly && DB::getSchemaBuilder()->hasColumn('orders', 'delivery_status')) {
             $deliveredQ->where('o.delivery_status', 'delivered');
         }
@@ -117,14 +135,23 @@ class DailyZoneReconcileHandler implements EventHandler
         $deliveredTotal = 0.0;
 
         foreach ($deliveredRows as $r) {
-            $pid = (string) ($r->product_id ?? 0);
-            if ($pid === '0') continue;
+            $productId = (int) ($r->product_id ?? 0);
+            $variantId = (int) ($r->variant_id ?? 0);
+
+            if ($productId <= 0) {
+                continue;
+            }
+
+            $key = $productId . '|' . $variantId;
             $qty = (float) ($r->qty ?? 0);
-            $delivered[$pid] = $qty;
+
+            $delivered[$key] = $qty;
             $deliveredTotal += $qty;
 
-            $t = (string) ($r->title ?? '');
-            if ($t !== '' && !isset($titles[$pid])) $titles[$pid] = $t;
+            $title = (string) ($r->title ?? '');
+            if ($title !== '' && !isset($titles[$key])) {
+                $titles[$key] = $title;
+            }
         }
 
         // ----------------------------------------
@@ -135,27 +162,31 @@ class DailyZoneReconcileHandler implements EventHandler
         $diff = [];
         $mismatches = [];
 
-        foreach ($keys as $pid) {
-            $in  = (float) ($supplied[$pid] ?? 0);
-            $out = (float) ($delivered[$pid] ?? 0);
-            $d   = $in - $out;
+        foreach ($keys as $key) {
+            $in = (float) ($supplied[$key] ?? 0);
+            $out = (float) ($delivered[$key] ?? 0);
+            $d = $in - $out;
 
-            $diff[$pid] = $d;
+            $diff[$key] = $d;
+
+            [$productId, $variantId] = array_pad(explode('|', (string) $key, 2), 2, 0);
+            $productId = (int) $productId;
+            $variantId = (int) $variantId;
 
             if (abs($d) > 0.000001) {
                 $mismatches[] = [
-                    'product_id'    => (int) $pid,
-                    'title'         => (string) ($titles[$pid] ?? ''),
-                    'supplied_qty'  => $in,
+                    'product_id' => $productId,
+                    'variant_id' => $variantId,
+                    'title' => (string) ($titles[$key] ?? ''),
+                    'supplied_qty' => $in,
                     'delivered_qty' => $out,
-                    'diff_qty'      => $d,
+                    'diff_qty' => $d,
                 ];
             }
         }
 
         $status = count($mismatches) ? 'mismatch' : 'matched';
 
-        // Counts of orders (helpful debug)
         $supplierOrdersCount = (int) DB::table('orders as o')
             ->join('draft_orders as d', 'd.id', '=', 'o.draft_order_id')
             ->join('sub_change_requests as scr', 'scr.id', '=', 'd.change_request_id')
@@ -163,9 +194,12 @@ class DailyZoneReconcileHandler implements EventHandler
             ->whereDate('o.delivery_date', $targetDate)
             ->whereNotIn('o.status', ['cancelled'])
             ->where('scr.party_type', 'supplier')
-            ->when($subTypeId > 0 && DB::getSchemaBuilder()->hasColumn('sub_change_requests', 'subscription_type_id'), function ($q) use ($subTypeId) {
-                $q->where('scr.subscription_type_id', $subTypeId);
-            })
+            ->when(
+                $subTypeId > 0 && DB::getSchemaBuilder()->hasColumn('sub_change_requests', 'subscription_type_id'),
+                function ($q) use ($subTypeId) {
+                    $q->where('scr.subscription_type_id', $subTypeId);
+                }
+            )
             ->count();
 
         $consumerOrdersCountQ = DB::table('orders as o')
@@ -175,9 +209,12 @@ class DailyZoneReconcileHandler implements EventHandler
             ->whereDate('o.delivery_date', $targetDate)
             ->whereNotIn('o.status', ['cancelled'])
             ->where('scr.party_type', 'consumer')
-            ->when($subTypeId > 0 && DB::getSchemaBuilder()->hasColumn('sub_change_requests', 'subscription_type_id'), function ($q) use ($subTypeId) {
-                $q->where('scr.subscription_type_id', $subTypeId);
-            });
+            ->when(
+                $subTypeId > 0 && DB::getSchemaBuilder()->hasColumn('sub_change_requests', 'subscription_type_id'),
+                function ($q) use ($subTypeId) {
+                    $q->where('scr.subscription_type_id', $subTypeId);
+                }
+            );
 
         if ($deliveredOnly && DB::getSchemaBuilder()->hasColumn('orders', 'delivery_status')) {
             $consumerOrdersCountQ->where('o.delivery_status', 'delivered');

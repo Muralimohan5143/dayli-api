@@ -83,12 +83,22 @@ class OutboxWorkCommand extends Command
     {
         // Route to handlers
         switch ($type) {
+
             case 'vendor_supply_entered':
                 $this->handleVendorSupplyEntered($payload, $ev);
                 return;
 
+            case 'zone.daily.reconcile':
+                app(\App\Ops\Handlers\DailyZoneReconcileHandler::class)
+                    ->handle(\App\Models\OutboxEvent::find($ev->id));
+                return;
+
+            case 'vendor.supply.reconcile':
+                app(\App\Ops\Handlers\VendorSupplyReconcileHandler::class)
+                    ->handle(\App\Models\OutboxEvent::find($ev->id));
+                return;
+
             default:
-                // unknown event type = fail fast
                 throw new \RuntimeException("Unknown outbox event_type: {$type}");
         }
     }

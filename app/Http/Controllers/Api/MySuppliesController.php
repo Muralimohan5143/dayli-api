@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use App\Jobs\SendPushToUserJob;
+use App\Models\OutboxEvent;
 
 class MySuppliesController extends Controller
 {
@@ -214,7 +215,7 @@ class MySuppliesController extends Controller
 
         // existing order rows for this vendor + targetDate + those draft_orders
         $existingDoIds = DB::table('orders')
-            ->where('customer_id', $vendorId)                 // ✅ vendor owns supply-orders
+            ->where('vendor_id', $vendorId)
             ->whereDate('delivery_date', $targetDate)
             ->whereIn('draft_order_id', $draftOrderIds)
             ->pluck('draft_order_id')
@@ -231,13 +232,17 @@ class MySuppliesController extends Controller
                 return (int) ($rows->first()->zone_id ?? 0);
             });
 
-            $insertRows = array_map(function ($doId) use ($vendorId, $targetDate, $now, $zoneByDo) {
+            $customerByDo = $baseRows->groupBy('draft_order_id')->map(function ($rows) {
+                return (int) ($rows->first()->customer_id ?? 0);
+            });
+
+            $insertRows = array_map(function ($doId) use ($vendorId, $targetDate, $now, $zoneByDo, $customerByDo) {
                 $z = (int) ($zoneByDo[$doId] ?? 0);
+                $customerId = (int) ($customerByDo[$doId] ?? 0);
 
                 return [
                     'order_type'       => 'subscription',
-                    'customer_id'      => (int) $vendorId,
-                    // ✅ MUST SET THIS (prevents vendor_id null)
+                    'customer_id'      => $customerId,
                     'vendor_id'        => (int) $vendorId,
                     'zone_id'          => $z > 0 ? $z : null,
                     'draft_order_id'   => (int) $doId,
@@ -258,7 +263,7 @@ class MySuppliesController extends Controller
         if ($mode === 'dates') {
 
             $pendingDates = DB::table('orders')
-                ->where('customer_id', $vendorId)
+                ->where('vendor_id', $vendorId)
                 ->whereIn('draft_order_id', $draftOrderIds)
                 ->whereNotNull('delivery_date')
                 ->where('delivery_status', 'pending')
@@ -271,7 +276,7 @@ class MySuppliesController extends Controller
                 ->values();
 
             $doneDates = DB::table('orders')
-                ->where('customer_id', $vendorId)
+                ->where('vendor_id', $vendorId)
                 ->whereIn('draft_order_id', $draftOrderIds)
                 ->whereNotNull('delivery_date')
                 ->where('delivery_status', 'delivered')
@@ -295,7 +300,7 @@ class MySuppliesController extends Controller
         // ---------------------------------------------------------
         $orders = DB::table('orders')
             ->select('id', 'draft_order_id', 'delivery_status')
-            ->where('customer_id', $vendorId)
+            ->where('vendor_id', $vendorId)
             ->whereIn('draft_order_id', $draftOrderIds)
             ->whereDate('delivery_date', $targetDate)
             ->orderByDesc('id')
@@ -824,10 +829,7 @@ class MySuppliesController extends Controller
                     'event_type'     => 'vendor_supply_entered',
                     'aggregate_type' => 'order',
                     'aggregate_id'   => $order->id,
-
-                    // ✅ Correct column name
                     'scheduled_at'   => now(),
-
                     'payload'        => DB::raw(
                         "JSON_OBJECT(
                 'vendor_id', {$vendorId},
@@ -837,13 +839,33 @@ class MySuppliesController extends Controller
                 'source', 'dayli_app'
             )"
                     ),
-
                     'status'        => 'pending',
                     'attempts'      => 0,
                     'max_attempts'  => 10,
-
                     'updated_at'    => now(),
                     'created_at'    => now(),
+                ]
+            );
+
+            // 7️⃣ Write outbox event for Daily Zone Reconcile
+            OutboxEvent::updateOrCreate(
+                [
+                    'idempotency_key' => "zone_daily_reconcile:zone:" . ($order->zone_id ?? 0) . ":date:{$deliveryDate}:subtype:" . ((int)($scr->subscription_type_id ?? 0)),
+                ],
+                [
+                    'event_type'     => 'zone.daily.reconcile',
+                    'aggregate_type' => 'zone',
+                    'aggregate_id'   => (int) ($order->zone_id ?? 0),
+                    'scheduled_at'   => now(),
+                    'payload'        => [
+                        'zone_id' => (int) ($order->zone_id ?? 0),
+                        'delivery_date' => $deliveryDate,
+                        'subscription_type_id' => (int) ($scr->subscription_type_id ?? 0),
+                        'delivered_only' => true,
+                    ],
+                    'status'        => 'pending',
+                    'attempts'      => 0,
+                    'max_attempts'  => 10,
                 ]
             );
 

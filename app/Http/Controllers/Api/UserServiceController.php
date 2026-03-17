@@ -131,44 +131,114 @@ class UserServiceController extends Controller
         return DB::transaction(function () use ($data) {
             $user = User::findOrFail($data['user_id']);
 
-            // assign spatie role
+            // base role can exist once
             if (! $user->hasRole($data['role_name'])) {
                 $user->assignRole($data['role_name']);
             }
 
-            // optional specialized role for current existing app logic
-            if ($data['role_name'] === 'vendor' && ($data['service_handle'] ?? null) === 'milk') {
-                if (! $user->hasRole('vendor-milk')) {
-                    $user->assignRole('vendor-milk');
-                }
-            }
+            $serviceHandle = $data['service_handle'] ?? null;
+            $subscriptionTypeId = $data['subscription_type_id'] ?? null;
+            $zoneId = $data['zone_id'] ?? null;
+            $hasApprovedVendor = UserService::where('user_id', $user->id)
+                ->where('role_name', 'vendor')
+                ->where('status', 'approved')
+                ->exists();
+            $meta = $data['meta'] ?? null;
 
-            if ($data['role_name'] === 'workman' && ($data['service_handle'] ?? null) === 'workman-delivery-boy') {
-                if (! $user->hasRole('workman-delivery-boy')) {
-                    $user->assignRole('workman-delivery-boy');
-                }
-            }
+            $existing = UserService::where('user_id', $user->id)
+                ->where('role_name', $data['role_name'])
+                ->where('service_handle', $serviceHandle)
+                ->where('subscription_type_id', $subscriptionTypeId)
+                ->where('zone_id', $zoneId)
+                ->first();
 
-            $userService = UserService::updateOrCreate(
-                [
+            // CUSTOMER => direct approve
+            if ($data['role_name'] === 'customer') {
+                if ($existing) {
+                    return response()->json([
+                        'ok' => true,
+                        'message' => 'Customer service already exists.',
+                        'data' => $existing->load('documents'),
+                    ]);
+                }
+
+                $userService = UserService::create([
                     'user_id'              => $user->id,
                     'role_name'            => $data['role_name'],
-                    'service_handle'       => $data['service_handle'] ?? null,
-                    'subscription_type_id' => $data['subscription_type_id'] ?? null,
-                    'zone_id'              => $data['zone_id'] ?? null,
-                ],
-                [
-                    'status'      => $data['role_name'] === 'customer' ? 'approved' : 'pending',
-                    'is_active'   => $data['role_name'] === 'customer',
-                    'meta'        => $data['meta'] ?? null,
-                ]
-            );
+                    'service_handle'       => $serviceHandle,
+                    'subscription_type_id' => $subscriptionTypeId,
+                    'zone_id'              => $zoneId,
+                    'status'               => 'approved',
+                    'is_active'            => true,
+                    'meta' => array_merge($meta ?? [], [
+                        'skip_documents' => ($data['role_name'] === 'vendor') ? $hasApprovedVendor : false,
+                    ]),
+                ]);
+
+                return response()->json([
+                    'ok' => true,
+                    'message' => 'Customer service created successfully.',
+                    'data' => $userService->load('documents'),
+                ], 201);
+            }
+
+            // already approved => do not reset to pending
+            if ($existing && $existing->status === 'approved') {
+                return response()->json([
+                    'ok' => true,
+                    'message' => 'Service already approved.',
+                    'data' => $existing->load('documents'),
+                ], 200);
+            }
+
+            // already pending / under_review => return existing, no duplicate update
+            if ($existing && in_array($existing->status, ['pending', 'under_review'])) {
+                return response()->json([
+                    'ok' => true,
+                    'message' => 'Service request already submitted.',
+                    'data' => $existing->load('documents'),
+                ], 200);
+            }
+
+            // rejected / inactive / suspended => allow resubmit on same row
+            if ($existing && in_array($existing->status, ['rejected', 'inactive', 'suspended'])) {
+                $existing->update([
+                    'status'           => 'pending',
+                    'is_active'        => false,
+                    'approved_by'      => null,
+                    'approved_at'      => null,
+                    'rejection_reason' => null,
+                    'meta' => array_merge($meta ?? [], [
+                        'skip_documents' => ($data['role_name'] === 'vendor') ? $hasApprovedVendor : false,
+                    ]),
+                ]);
+
+                return response()->json([
+                    'ok' => true,
+                    'message' => 'Service re-submitted successfully.',
+                    'data' => $existing->load('documents'),
+                ], 200);
+            }
+
+            // first time new service => create pending row
+            $userService = UserService::create([
+                'user_id'              => $user->id,
+                'role_name'            => $data['role_name'],
+                'service_handle'       => $serviceHandle,
+                'subscription_type_id' => $subscriptionTypeId,
+                'zone_id'              => $zoneId,
+                'status'               => 'pending',
+                'is_active'            => false,
+                'meta' => array_merge($meta ?? [], [
+                    'skip_documents' => ($data['role_name'] === 'vendor') ? $hasApprovedVendor : false,
+                ]),
+            ]);
 
             return response()->json([
                 'ok' => true,
                 'message' => 'Service application saved successfully.',
                 'data' => $userService->load('documents'),
-            ]);
+            ], 201);
         });
     }
 
@@ -295,6 +365,19 @@ class UserServiceController extends Controller
                     'status' => 'verified',
                     'remarks' => $data['remarks'] ?? null,
                 ]);
+
+            // assign specialized role only AFTER approval
+            if ($userService->role_name === 'vendor' && $userService->service_handle === 'milk') {
+                if (! $userService->user->hasRole('vendor-milk')) {
+                    $userService->user->assignRole('vendor-milk');
+                }
+            }
+
+            if ($userService->role_name === 'workman' && $userService->service_handle === 'workman-delivery-boy') {
+                if (! $userService->user->hasRole('workman-delivery-boy')) {
+                    $userService->user->assignRole('workman-delivery-boy');
+                }
+            }
 
             if (
                 $userService->role_name === 'workman' &&

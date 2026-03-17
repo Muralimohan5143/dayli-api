@@ -912,7 +912,7 @@ class MeController extends Controller
                     'idempotency_key' => "recon.daily_zone:zone:{$order->zone_id}:date:{$order->delivery_date}",
                 ],
                 [
-                    'event_type'     => 'recon.daily_zone',
+                    'event_type' => 'zone.daily.reconcile',
                     'aggregate_type' => 'order',
                     'aggregate_id'   => $order->id,
                     'scheduled_at'   => now(),

@@ -160,7 +160,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // NOTE: Create controller MySuppliesController with same methods as MyWorkController/MeController flow.
     // Backend must filter supplier side: scr.party_type = 'supplier'
     // --------------------------
-    Route::middleware(['approved.service:vendor,milk'])->prefix('my-supplies')->group(function () {
+    Route::middleware(['approved.service:vendor,milk-and-dairy'])->prefix('my-supplies')->group(function () {
         Route::get('/summary', [MySuppliesController::class, 'summary']);
         Route::get('/orders',  [MySuppliesController::class, 'orders']);
 
