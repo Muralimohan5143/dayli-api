@@ -68,6 +68,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // --------------------------
     Route::get('/user', fn(Request $request) => $request->user());
     Route::get('/me', [MeController::class, 'show']);
+    Route::get('/notifications', [MeController::class, 'notifications']);
     Route::post('/profile/service', [ProfileController::class, 'saveServiceProfile']);
 
     // --------------------------

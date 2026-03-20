@@ -880,7 +880,7 @@ class MySuppliesController extends Controller
                         'entity_id' => (string) $order->id,
                         'deeplink' => 'dayli://orders/' . $order->id,
                     ],
-                ])->onQueue('ops');
+                ]);
             });
             return response()->json([
                 'order_id'        => $order->id,

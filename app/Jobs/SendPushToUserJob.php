@@ -10,6 +10,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class SendPushToUserJob implements ShouldQueue
 {
@@ -25,6 +26,25 @@ class SendPushToUserJob implements ShouldQueue
 
     public function handle(FcmService $fcm): void
     {
+
+        // ✅ SAVE notification in DB
+        DB::table('notifications')->insert([
+            'user_id' => $this->userId,
+            'title'   => $this->payload['title'] ?? 'Notification',
+            'body'    => $this->payload['body'] ?? null,
+
+            // ✅ FIXED
+            'data'    => json_encode($this->payload['data'] ?? []),
+
+            // ✅ FIXED
+            'type'    => $this->payload['data']['type'] ?? null,
+
+            'source'  => 'system',
+            'is_read' => 0,
+
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         // 1) Check tokens BEFORE sending
         $tokens = DeviceToken::query()
             ->where('user_id', $this->userId)

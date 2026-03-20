@@ -933,16 +933,46 @@ class MeController extends Controller
                 ]
             );
 
-            SendPushToUserJob::dispatch((int)$order->customer_id, [
-                'title' => 'Order Delivered',
-                'body'  => 'Your order #' . $order->id . ' has been delivered',
+            $day  = Carbon::parse($order->delivery_date)->format('l');
+            $date = Carbon::parse($order->delivery_date)->format('d M');
+
+            $orderItemsForNotification = OrderItem::query()
+                ->where('order_id', $order->id)
+                ->get()
+                ->map(function ($oi) {
+                    return [
+                        'name' => $oi->title ?? 'Item',
+                        'qty'  => (float) $oi->quantity,
+                        'unit' => $oi->meta['unit'] ?? null,
+                    ];
+                })
+                ->values()
+                ->all();
+
+            SendPushToUserJob::dispatch((int) $order->customer_id, [
+                'title' => "Your order on {$day}",
+                'body'  => "Your items for {$day} - {$date}\nhave been delivered",
+
                 'data'  => [
                     'type' => 'order',
+                    'action' => 'delivered',
+
+                    'order_id' => (string) $order->id,
                     'entity_id' => (string) $order->id,
+
+                    'screen' => 'order_detail',
                     'deeplink' => 'dayli://orders/' . $order->id,
+
                     'delivery_date' => (string) $order->delivery_date,
+                    'day' => $day,
+                    'date_label' => $date,
+
+                    'items' => $orderItemsForNotification,
+
+                    'cta_primary' => 'view_details',
+                    'cta_secondary' => 'close',
                 ],
-            ])->onQueue('ops');
+            ]);
 
             return response()->json([
                 'order_id'        => $order->id,
@@ -951,5 +981,20 @@ class MeController extends Controller
                 'delivery_status' => $order->delivery_status,
             ]);
         });
+    }
+    public function notifications(Request $request)
+    {
+        $user = $request->user();
+
+        $data = DB::table('notifications')
+            ->where('user_id', $user->id)
+            ->orderByDesc('id')
+            ->limit(50)
+            ->get();
+
+        return response()->json([
+            'ok' => true,
+            'data' => $data,
+        ]);
     }
 }

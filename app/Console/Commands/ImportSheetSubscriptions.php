@@ -18,26 +18,33 @@ class ImportSheetSubscriptions extends Command
     // command for insert SCR + Draft Orders + Orders + Order Items from sheet with columns: phone=Phone Number, start_date=Start Date, milk=Milk Name (e.g., Vijaya Gold Milk), ask_count=Base Qty (optional, default 1), day_1..day_31=Day-specific qty (optional). The command will group rows by phone number, create one SCR per user, one Draft Order per SCR, and multiple Orders/Order Items based on the day columns. Use --dry-run to preview the mapping without DB writes. Always backup your database before running imports.
     //php artisan import:sheet-subscriptions "C:\Users\mandl\work\flutter projects\orders_users.xlsx" --dry-run --by=1 --default-zone=1 --order-status=draft --month=03 --year=2026
     protected $signature = 'import:sheet-subscriptions
-        {xlsx_path : Full path to XLSX}
-        {--dry-run : Do not write to DB}
-        {--by=1 : by_user_id for SCR}
-        {--default-zone= : fallback zone_id if users.zone_id is null}
-        {--order-status=draft : orders.status (draft|pending|confirmed|fulfilled|cancelled)}
-        {--month= : month number for Day columns (1-12). If empty, uses start_date month}
-        {--year= : year for Day columns (YYYY). If empty, uses start_date year}
-        {--sheet=0 : sheet index (0-based)}
-        {--reuse-existing : Do not create SCR/Draft Order/DOI. Reuse existing only; skip if missing}
-
-    ';
-
+    {xlsx_path : Full path to XLSX}
+    {--mode=base : base|sbr|orders|all}
+    {--dry-run : Do not write to DB}
+    {--by=1 : by_user_id for SCR}
+    {--default-zone= : fallback zone_id if users.zone_id is null}
+    {--order-status=draft : orders.status (draft|pending|confirmed|fulfilled|cancelled)}
+    {--month= : month number for Day columns (1-12)}
+    {--year= : year for Day columns (YYYY)}
+    {--sheet=0 : sheet index (0-based)}
+    {--reuse-existing : Do not create SCR/Draft Order/DOI. Reuse existing only; skip if missing}
+    {--today-only : Process day exceptions only till today}
+';
     protected $description = 'Import SCR(1 per subscription_type), Draft Orders, Draft Order Items, Orders(order_type=subscription), Order Items from XLSX using users.phone.';
 
     public function handle(): int
     {
         $path = (string) $this->argument('xlsx_path');
+        $mode = strtolower((string) $this->option('mode'));
         $dryRun = (bool) $this->option('dry-run');
         $byUserId = (int) $this->option('by');
         $reuseExisting = (bool) $this->option('reuse-existing');
+        $todayOnly = (bool) $this->option('today-only');
+
+        if (!in_array($mode, ['base', 'sbr', 'orders', 'all'], true)) {
+            $this->error("Invalid --mode. Use base|sbr|orders|all");
+            return self::FAILURE;
+        }
 
         $defaultZone = $this->option('default-zone');
         $defaultZone = ($defaultZone !== null && $defaultZone !== '') ? (int)$defaultZone : null;
@@ -183,13 +190,14 @@ class ImportSheetSubscriptions extends Command
 
                 if (!isset($groups[$phone]['items'][$milkName])) {
                     $groups[$phone]['items'][$milkName] = [
-                        'base_qty' => 0,
-                        'start_date' => $startDate, // per-item start date
+                        'base_qty' => (int)$baseQty,
+                        'start_date' => $startDate,
                         'days' => [],
                     ];
+                } else {
+                    $groups[$phone]['items'][$milkName]['base_qty'] = (int)$baseQty;
                 }
 
-                $groups[$phone]['items'][$milkName]['base_qty'] += $baseQty;
 
                 // earliest per-item start_date wins
                 if ($startDate && (
@@ -201,11 +209,20 @@ class ImportSheetSubscriptions extends Command
 
                 // Merge day columns for this specific milk item
                 foreach ($dayCols as $day => $dayCol) {
-                    $q = $this->parseQty((string)($r[$dayCol] ?? ''));
-                    if ($q === null || $q <= 0) continue;
+                    $raw = (string)($r[$dayCol] ?? '');
+                    $q = $this->parseQtyAllowZero($raw);
 
-                    $groups[$phone]['items'][$milkName]['days'][$day] =
-                        ($groups[$phone]['items'][$milkName]['days'][$day] ?? 0) + (int)$q;
+                    if ($q === null) {
+                        continue; // truly empty
+                    }
+
+                    $existing = $groups[$phone]['items'][$milkName]['days'][$day] ?? null;
+
+                    if ($existing === null) {
+                        $groups[$phone]['items'][$milkName]['days'][$day] = (int)$q;
+                    } else {
+                        $groups[$phone]['items'][$milkName]['days'][$day] = max($existing, (int)$q);
+                    }
                 }
             }
 
@@ -222,20 +239,15 @@ class ImportSheetSubscriptions extends Command
                 }
 
                 $zoneId = $user->zone_id ?? $defaultZone;
+                $startDate = $g['start_date'];
 
-                $startDate = $g['start_date']; // may be null (but you said sheet has it)
-
-                // Month/year from start_date OR CLI override
-                // Month/year MUST come from CLI for Day1..Day31 (billing month)
-                if ($optYear === null || $optMonth === null) {
-                    $this->error("Please pass --month and --year for Day columns. Example: --month=12 --year=2025");
-                    return self::FAILURE;
+                if (in_array($mode, ['sbr', 'orders', 'all'], true)) {
+                    if ($optYear === null || $optMonth === null) {
+                        $this->error("Please pass --month and --year. Example: --month=3 --year=2026");
+                        return self::FAILURE;
+                    }
                 }
 
-                $year = $optYear;
-                $month = $optMonth;
-
-                // For each product type in this phone group
                 $subTypeId = $this->mapSubscriptionTypeId('milk', $subBySlug);
                 if (!$subTypeId) {
                     $skipped++;
@@ -243,41 +255,11 @@ class ImportSheetSubscriptions extends Command
                     continue;
                 }
 
-                // Build all order items by date: date => list of items
-                $ordersByDate = []; // 'YYYY-MM-DD' => [ ['product_id'=>..,'variant_id'=>..,'title'=>..,'unit_price'=>..,'qty'=>..], ... ]
-
                 try {
-                    if ($dryRun) {
-                        foreach (($g['items'] ?? []) as $milkName => $item) {
-                            $pv = $this->findProductVariantByMilkName($milkName);
-                            if (!$pv) {
-                                $this->warn("DRY: user={$user->id} phone={$phone} milk='{$milkName}' => product/variant NOT FOUND");
-                                continue;
-                            }
-
-                            $itemStart = $item['start_date'] ?? $startDate;
-
-                            // ✅ if missing, fallback to import month start (ex: 2025-11-01)
-                            if (!$itemStart && $optYear && $optMonth) {
-                                $itemStart = sprintf('%04d-%02d-01', (int)$optYear, (int)$optMonth);
-                            }
-
-                            $itemStart = $itemStart ?: now()->toDateString();
-
-                            // month/year from itemStart (better than global)
-                            [$yS, $mS] = $this->ymFromDate($itemStart);
-                            $yearUse = $optYear ?? $yS;
-                            $monthUse = $optMonth ?? $mS;
-
-                            $dateQty = $this->buildDateQtyList($item['days'] ?? [], $yearUse, $monthUse, $itemStart, (int)$item['base_qty']);
-
-                            $this->line("DRY: user={$user->id} phone={$phone} milk='{$milkName}' product={$pv['product_id']} variant={$pv['variant_id']} start={$itemStart} orders=" . count($dateQty));
-                        }
-                        // no DB writes in dry-run
-                        continue;
-                    }
-
                     DB::transaction(function () use (
+                        $mode,
+                        $dryRun,
+                        $todayOnly,
                         $user,
                         $zoneId,
                         $byUserId,
@@ -287,155 +269,78 @@ class ImportSheetSubscriptions extends Command
                         $optYear,
                         $optMonth,
                         $orderStatus,
+                        $reuseExisting,
                         &$createdScr,
                         &$createdDraftOrders,
                         &$createdDraftItems,
                         &$createdOrders,
-                        &$createdOrderItems,
-                        $reuseExisting,
-
+                        &$createdOrderItems
                     ) {
-                        // 1) SCR once per (user + milk subscription_type_id)
 
-                        if ($reuseExisting) {
-                            // ✅ reuse existing only (do not create)
-                            $existingScr = DB::table('sub_change_requests')
-                                ->where('for_user_id', (int)$user->id)
-                                ->where('subscription_type_id', $subTypeId)
-                                ->orderByDesc('id')
-                                ->first();
+                        // -------------------------
+                        // BASE: SCR + DR + DOI
+                        // -------------------------
+                        $base = $this->ensureBaseState(
+                            $user,
+                            $zoneId,
+                            $byUserId,
+                            $subTypeId,
+                            $g,
+                            $startDate,
+                            $optYear,
+                            $optMonth,
+                            $reuseExisting,
+                            $dryRun
+                        );
 
-                            if (!$existingScr) {
-                                // skip this user completely if SCR missing
-                                return;
-                            }
-
-                            $scrId = [
-                                'id' => (int)$existingScr->id,
-                                'created' => false,
-                                'needs_draft_link' => empty($existingScr->draft_order_id),
-                            ];
-                        } else {
-                            // OLD (keep)
-                            // $scrId = $this->ensureScr((int)$user->id, $byUserId, $zoneId, $subTypeId);
-                            // if ($scrId['created']) $createdScr++;
-
-                            $scrId = $this->ensureScr((int)$user->id, $byUserId, $zoneId, $subTypeId);
-                            if ($scrId['created']) $createdScr++;
+                        if (!$dryRun) {
+                            $createdScr += $base['created_scr'];
+                            $createdDraftOrders += $base['created_draft_orders'];
+                            $createdDraftItems += $base['created_draft_items'];
                         }
 
-                        // 2) Draft Order once per SCR
-                        $groupStart = $startDate;
-
-                        // ✅ fallback to import month start (NOT today)
-                        if (!$groupStart && $optYear && $optMonth) {
-                            $groupStart = sprintf('%04d-%02d-01', (int)$optYear, (int)$optMonth);
-                        }
-                        $groupStart = $groupStart ?: now()->toDateString();
-
-                        if ($reuseExisting) {
-                            // ✅ reuse existing only
-                            $existingDraft = DB::table('draft_orders')
-                                ->where('change_request_id', (int)$scrId['id'])
-                                ->where('status', 'active')
-                                ->first();
-
-                            if (!$existingDraft) {
-                                // skip this user completely if Draft Order missing
-                                return;
-                            }
-
-                            $draftOrderId = ['id' => (int)$existingDraft->id, 'created' => false];
-                        } else {
-                            // OLD (keep)
-                            // $draftOrderId = $this->ensureDraftOrder($scrId['id'], (int)$user->id, $zoneId, $groupStart);
-                            // if ($draftOrderId['created']) $createdDraftOrders++;
-
-                            $draftOrderId = $this->ensureDraftOrder($scrId['id'], (int)$user->id, $zoneId, $groupStart);
-                            if ($draftOrderId['created']) $createdDraftOrders++;
+                        if ($mode === 'base') {
+                            return;
                         }
 
-
-                        // link scr.draft_order_id if needed
-                        if ($scrId['needs_draft_link'] && $draftOrderId['id']) {
-                            DB::table('sub_change_requests')->where('id', $scrId['id'])->update([
-                                'draft_order_id' => $draftOrderId['id'],
-                                'updated_at' => now(),
-                            ]);
+                        // -------------------------
+                        // SBR: exceptions from day columns
+                        // -------------------------
+                        if (in_array($mode, ['sbr', 'all'], true)) {
+                            $this->processDayExceptions(
+                                $user,
+                                $base,
+                                $g,
+                                (int)$optYear,
+                                (int)$optMonth,
+                                $todayOnly,
+                                $dryRun
+                            );
                         }
 
-                        // 3) For each milk item row => create DOI + accumulate daily order_items
-                        $ordersByDate = [];
-
-                        foreach (($g['items'] ?? []) as $milkName => $item) {
-
-                            $pv = $this->findProductVariantByMilkName($milkName);
-                            if (!$pv) {
-                                // skip item if not found
-                                continue;
-                            }
-
-                            $itemStart = $item['start_date'] ?? $groupStart;
-                            $itemStart = $itemStart ?: $groupStart;
-
-                            if (!$reuseExisting) {
-                                // OLD (keep)
-                                // $doi = $this->ensureDraftOrderItem(...);
-                                // if ($doi) $createdDraftItems++;
-
-                                $doi = $this->ensureDraftOrderItem(
-                                    $draftOrderId['id'],
-                                    $pv['product_id'],
-                                    $pv['variant_id'],
-                                    (float)max(1, (int)$item['base_qty']),
-                                    $itemStart,
-                                    (float)$pv['unit_price']
-                                );
-                                if ($doi) $createdDraftItems++;
-                            } else {
-                                // ✅ reuse mode: do not create DOI
-                                // (orders/order_items will still be created below and linked to same draft_order_id)
-                            }
-
-
-                            // Month/year from itemStart
-                            [$yS, $mS] = $this->ymFromDate($itemStart);
-                            $yearUse = $optYear ?? $yS;
-                            $monthUse = $optMonth ?? $mS;
-
-                            // Build dates from this item's own day qtys
-                            $dateQty = $this->buildDateQtyList($item['days'] ?? [], $yearUse, $monthUse, $itemStart, (int)$item['base_qty']);
-
-                            foreach ($dateQty as [$date, $qty]) {
-                                $qty = (int)$qty;
-                                if ($qty <= 0) continue;
-
-                                $ordersByDate[$date][] = [
-                                    'product_id' => $pv['product_id'],
-                                    'variant_id' => $pv['variant_id'],
-                                    'title' => $pv['title'],
-                                    'unit_price' => (float)$pv['unit_price'],
-                                    'qty' => $qty,
-                                ];
-                            }
+                        if ($mode === 'sbr') {
+                            return;
                         }
 
-                        // 4) Create one order per date, and multiple order_items inside it
-                        foreach ($ordersByDate as $date => $items) {
-                            $orderId = $this->ensureOrder((int)$user->id, $zoneId, $draftOrderId['id'], $orderStatus, $date);
-                            if ($orderId['created']) $createdOrders++;
+                        // -------------------------
+                        // ORDERS: create from effective day qtys
+                        // -------------------------
+                        if (in_array($mode, ['orders', 'all'], true)) {
+                            $result = $this->createOrdersFromSheetDays(
+                                $user,
+                                $zoneId,
+                                $base,
+                                $g,
+                                (int)$optYear,
+                                (int)$optMonth,
+                                $orderStatus,
+                                $todayOnly,
+                                $dryRun
+                            );
 
-                            foreach ($items as $it) {
-                                $oi = $this->ensureOrderItem(
-                                    $orderId['id'],
-                                    (int)$it['product_id'],
-                                    (int)$it['variant_id'],
-                                    (string)$it['title'],
-                                    (int)$it['qty'],
-                                    (float)$it['unit_price'],
-                                    $date // ✅ actuals_date
-                                );
-                                if ($oi) $createdOrderItems++;
+                            if (!$dryRun) {
+                                $createdOrders += $result['created_orders'];
+                                $createdOrderItems += $result['created_order_items'];
                             }
                         }
                     });
@@ -444,7 +349,6 @@ class ImportSheetSubscriptions extends Command
                     $this->error("Phone {$phone} FAILED: " . $e->getMessage());
                 }
             }
-
 
             $this->info("Done.");
             $this->info("Duplicates skipped in file (by phone): {$dupInFile}");
@@ -461,7 +365,243 @@ class ImportSheetSubscriptions extends Command
             return self::FAILURE;
         }
     }
+    private function ensureBaseState(
+        object $user,
+        ?int $zoneId,
+        int $byUserId,
+        int $subTypeId,
+        array $g,
+        ?string $startDate,
+        ?int $optYear,
+        ?int $optMonth,
+        bool $reuseExisting,
+        bool $dryRun
+    ): array {
+        $createdScr = 0;
+        $createdDraftOrders = 0;
+        $createdDraftItems = 0;
 
+        if (!$startDate && $optYear && $optMonth) {
+            $startDate = sprintf('%04d-%02d-01', $optYear, $optMonth);
+        }
+        $groupStart = $startDate ?: now()->toDateString();
+
+        if ($dryRun) {
+            return [
+                'scr_id' => null,
+                'draft_order_id' => null,
+                'created_scr' => 0,
+                'created_draft_orders' => 0,
+                'created_draft_items' => 0,
+                'items' => $g['items'] ?? [],
+                'group_start' => $groupStart,
+                'by_user_id' => $byUserId,
+                'zone_id' => $zoneId,
+                'subscription_type_id' => $subTypeId,
+            ];
+        }
+
+        if ($reuseExisting) {
+            $existingScr = DB::table('sub_change_requests')
+                ->where('for_user_id', (int)$user->id)
+                ->where('subscription_type_id', $subTypeId)
+                ->orderByDesc('id')
+                ->first();
+
+            if (!$existingScr) {
+                throw new \RuntimeException("SCR missing in reuse-existing mode");
+            }
+
+            $scr = [
+                'id' => (int)$existingScr->id,
+                'created' => false,
+                'needs_draft_link' => empty($existingScr->draft_order_id),
+            ];
+        } else {
+            $scr = $this->ensureScr((int)$user->id, $byUserId, $zoneId, $subTypeId);
+            if ($scr['created']) $createdScr++;
+        }
+
+        if ($reuseExisting) {
+            $existingDraft = DB::table('draft_orders')
+                ->where('change_request_id', (int)$scr['id'])
+                ->where('status', 'active')
+                ->first();
+
+            if (!$existingDraft) {
+                throw new \RuntimeException("Draft Order missing in reuse-existing mode");
+            }
+
+            $draft = [
+                'id' => (int)$existingDraft->id,
+                'created' => false,
+            ];
+        } else {
+            $draft = $this->ensureDraftOrder($scr['id'], (int)$user->id, $zoneId, $groupStart);
+            if ($draft['created']) $createdDraftOrders++;
+        }
+
+        if (($scr['needs_draft_link'] ?? false) && $draft['id']) {
+            DB::table('sub_change_requests')->where('id', $scr['id'])->update([
+                'draft_order_id' => $draft['id'],
+                'updated_at' => now(),
+            ]);
+        }
+
+        foreach (($g['items'] ?? []) as $milkName => $item) {
+            $pv = $this->findProductVariantByMilkName($milkName);
+            if (!$pv) {
+                continue;
+            }
+
+            $itemStart = $item['start_date'] ?? $groupStart;
+            $itemStart = $itemStart ?: $groupStart;
+
+            if (!$reuseExisting) {
+                $doi = $this->ensureDraftOrderItem(
+                    $draft['id'],
+                    $pv['product_id'],
+                    $pv['variant_id'],
+                    (float)max(1, (int)$item['base_qty']),
+                    $itemStart,
+                    (float)$pv['unit_price']
+                );
+
+                if ($doi) $createdDraftItems++;
+            }
+        }
+
+        return [
+            'scr_id' => (int)$scr['id'],
+            'draft_order_id' => (int)$draft['id'],
+            'created_scr' => $createdScr,
+            'created_draft_orders' => $createdDraftOrders,
+            'created_draft_items' => $createdDraftItems,
+            'items' => $g['items'] ?? [],
+            'group_start' => $groupStart,
+            'by_user_id' => $byUserId,
+            'zone_id' => $zoneId,
+            'subscription_type_id' => $subTypeId,
+        ];
+    }
+    private function processDayExceptions(
+        object $user,
+        array $base,
+        array $g,
+        int $year,
+        int $month,
+        bool $todayOnly,
+        bool $dryRun
+    ): void {
+        foreach (($g['items'] ?? []) as $milkName => $item) {
+            $askCount = (int)($item['base_qty'] ?? 1);
+
+            foreach (($item['days'] ?? []) as $day => $qty) {
+                $date = sprintf('%04d-%02d-%02d', $year, $month, (int)$day);
+
+                if ($todayOnly && $date > now()->toDateString()) {
+                    continue;
+                }
+
+                if ($qty === null || $qty === '') {
+                    continue; // ignore truly empty days
+                }
+
+                $qty = (int)$qty;
+
+                if ($qty === $askCount) {
+                    continue;
+                }
+
+                if ($dryRun) {
+                    $this->line("DRY SBR: user={$user->id} milk='{$milkName}' date={$date} ask={$askCount} actual={$qty}");
+                    continue;
+                }
+
+                $action = ($qty === 0) ? 'pause' : 'modify';
+
+                $this->ensureDailyExceptionScr(
+                    baseScrId: (int)$base['scr_id'],
+                    forUserId: (int)$user->id,
+                    byUserId: (int)$base['by_user_id'],
+                    zoneId: $base['zone_id'],
+                    subscriptionTypeId: (int)$base['subscription_type_id'],
+                    action: $action,
+                    date: $date,
+                    oldQty: $askCount,
+                    newQty: $qty,
+                    milkName: $milkName
+                );
+            }
+        }
+    }
+
+    private function ensureDailyExceptionScr(
+        int $baseScrId,
+        int $forUserId,
+        int $byUserId,
+        ?int $zoneId,
+        ?int $subscriptionTypeId,
+        string $action, // pause|modify
+        string $date,
+        int $oldQty,
+        int $newQty,
+        string $milkName
+    ): int {
+        $payload = [
+            'effective_date' => $date,
+            'product_name' => $milkName,
+            'old_qty' => $oldQty,
+            'new_qty' => $newQty,
+        ];
+
+        $meta = [
+            'source' => 'sheet-import',
+            'import_type' => 'daily-exception',
+            'base_scr_id' => $baseScrId,
+        ];
+
+        $existing = DB::table('sub_change_requests')
+            ->where('from_id', $baseScrId)
+            ->where('for_user_id', $forUserId)
+            ->where('subscription_type_id', $subscriptionTypeId)
+            ->where('action', $action)
+            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(payload, '$.effective_date')) = ?", [$date])
+            ->first();
+
+        if ($existing) {
+            DB::table('sub_change_requests')->where('id', $existing->id)->update([
+                'payload' => json_encode($payload),
+                'meta' => json_encode($meta),
+                'updated_at' => now(),
+            ]);
+
+            return (int)$existing->id;
+        }
+
+        return (int) DB::table('sub_change_requests')->insertGetId([
+            'for_user_id' => $forUserId,
+            'by_user_id' => $byUserId,
+            'party_type' => 'consumer',
+            'from_id' => $baseScrId,
+            'draft_order_id' => null,
+            'zone_id' => $zoneId,
+            'subscription_type_id' => $subscriptionTypeId,
+            'subtypes_json' => json_encode([]),
+            'custom_frequency_format' => null,
+            'invoice_cycle' => 'monthly',
+            'change_reason' => 'staff-error',
+            'action' => $action,
+            'status' => 'approved',
+            'approved_by' => $byUserId,
+            'approved_at' => now(),
+            'priority' => 3,
+            'payload' => json_encode($payload),
+            'meta' => json_encode($meta),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
     // -------------------------
     // SCR: 1 per (user, subscription_type_id)
     // -------------------------
@@ -822,6 +962,105 @@ class ImportSheetSubscriptions extends Command
         if ($n <= 0) return null;
 
         return (int) round($n);
+    }
+
+    private function parseQtyAllowZero(string $v): ?int
+    {
+        $v = trim($v);
+        if ($v === '') return null;
+
+        $clean = preg_replace('/[^0-9.]+/', '', $v);
+        if ($clean === '') return null;
+
+        $n = (float)$clean;
+        if ($n < 0) return null;
+
+        return (int) round($n);
+    }
+    private function createOrdersFromSheetDays(
+        object $user,
+        ?int $zoneId,
+        array $base,
+        array $g,
+        int $year,
+        int $month,
+        string $orderStatus,
+        bool $todayOnly,
+        bool $dryRun
+    ): array {
+        $createdOrders = 0;
+        $createdOrderItems = 0;
+
+        $ordersByDate = [];
+
+        foreach (($g['items'] ?? []) as $milkName => $item) {
+            $pv = $this->findProductVariantByMilkName($milkName);
+            if (!$pv) {
+                continue;
+            }
+
+            foreach (($item['days'] ?? []) as $day => $qty) {
+                $date = sprintf('%04d-%02d-%02d', $year, $month, (int)$day);
+
+                if ($todayOnly && $date > now()->toDateString()) {
+                    continue;
+                }
+
+                if ($qty === null || $qty === '') {
+                    continue; // ignore truly empty days
+                }
+
+                $qty = (int)$qty;
+                if ($qty <= 0) {
+                    continue;
+                }
+                $ordersByDate[$date][] = [
+                    'product_id' => $pv['product_id'],
+                    'variant_id' => $pv['variant_id'],
+                    'title' => $pv['title'],
+                    'unit_price' => (float)$pv['unit_price'],
+                    'qty' => $qty,
+                ];
+            }
+        }
+
+        if ($dryRun) {
+            return [
+                'created_orders' => 0,
+                'created_order_items' => 0,
+            ];
+        }
+
+        foreach ($ordersByDate as $date => $items) {
+            $orderId = $this->ensureOrder(
+                (int)$user->id,
+                $zoneId,
+                (int)$base['draft_order_id'],
+                $orderStatus,
+                $date
+            );
+
+            if ($orderId['created']) $createdOrders++;
+
+            foreach ($items as $it) {
+                $oi = $this->ensureOrderItem(
+                    $orderId['id'],
+                    (int)$it['product_id'],
+                    (int)$it['variant_id'],
+                    (string)$it['title'],
+                    (int)$it['qty'],
+                    (float)$it['unit_price'],
+                    $date
+                );
+
+                if ($oi) $createdOrderItems++;
+            }
+        }
+
+        return [
+            'created_orders' => $createdOrders,
+            'created_order_items' => $createdOrderItems,
+        ];
     }
 
     private function parseDate($v): ?string
