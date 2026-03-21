@@ -213,7 +213,7 @@ class ImportSheetSubscriptions extends Command
                     $q = $this->parseQtyAllowZero($raw);
 
                     if ($q === null) {
-                        continue; // truly empty
+                        $q = 0; // empty box = pause
                     }
 
                     $existing = $groups[$phone]['items'][$milkName]['days'][$day] ?? null;
@@ -304,10 +304,10 @@ class ImportSheetSubscriptions extends Command
                         }
 
                         // -------------------------
-                        // SBR: exceptions from day columns
+                        // SBR: build DOI timeline blocks from sheet days
                         // -------------------------
                         if (in_array($mode, ['sbr', 'all'], true)) {
-                            $this->processDayExceptions(
+                            $this->processTimelineDoiBlocks(
                                 $user,
                                 $base,
                                 $g,
@@ -447,29 +447,9 @@ class ImportSheetSubscriptions extends Command
                 'updated_at' => now(),
             ]);
         }
-
-        foreach (($g['items'] ?? []) as $milkName => $item) {
-            $pv = $this->findProductVariantByMilkName($milkName);
-            if (!$pv) {
-                continue;
-            }
-
-            $itemStart = $item['start_date'] ?? $groupStart;
-            $itemStart = $itemStart ?: $groupStart;
-
-            if (!$reuseExisting) {
-                $doi = $this->ensureDraftOrderItem(
-                    $draft['id'],
-                    $pv['product_id'],
-                    $pv['variant_id'],
-                    (float)max(1, (int)$item['base_qty']),
-                    $itemStart,
-                    (float)$pv['unit_price']
-                );
-
-                if ($doi) $createdDraftItems++;
-            }
-        }
+        // DO NOT create base DOI here.
+        // For your requirement, DOI rows must be created only from timeline transitions
+        // inside processTimelineDoiBlocks().
 
         return [
             'scr_id' => (int)$scr['id'],
@@ -484,124 +464,9 @@ class ImportSheetSubscriptions extends Command
             'subscription_type_id' => $subTypeId,
         ];
     }
-    private function processDayExceptions(
-        object $user,
-        array $base,
-        array $g,
-        int $year,
-        int $month,
-        bool $todayOnly,
-        bool $dryRun
-    ): void {
-        foreach (($g['items'] ?? []) as $milkName => $item) {
-            $askCount = (int)($item['base_qty'] ?? 1);
 
-            foreach (($item['days'] ?? []) as $day => $qty) {
-                $date = sprintf('%04d-%02d-%02d', $year, $month, (int)$day);
 
-                if ($todayOnly && $date > now()->toDateString()) {
-                    continue;
-                }
 
-                if ($qty === null || $qty === '') {
-                    continue; // ignore truly empty days
-                }
-
-                $qty = (int)$qty;
-
-                if ($qty === $askCount) {
-                    continue;
-                }
-
-                if ($dryRun) {
-                    $this->line("DRY SBR: user={$user->id} milk='{$milkName}' date={$date} ask={$askCount} actual={$qty}");
-                    continue;
-                }
-
-                $action = ($qty === 0) ? 'pause' : 'modify';
-
-                $this->ensureDailyExceptionScr(
-                    baseScrId: (int)$base['scr_id'],
-                    forUserId: (int)$user->id,
-                    byUserId: (int)$base['by_user_id'],
-                    zoneId: $base['zone_id'],
-                    subscriptionTypeId: (int)$base['subscription_type_id'],
-                    action: $action,
-                    date: $date,
-                    oldQty: $askCount,
-                    newQty: $qty,
-                    milkName: $milkName
-                );
-            }
-        }
-    }
-
-    private function ensureDailyExceptionScr(
-        int $baseScrId,
-        int $forUserId,
-        int $byUserId,
-        ?int $zoneId,
-        ?int $subscriptionTypeId,
-        string $action, // pause|modify
-        string $date,
-        int $oldQty,
-        int $newQty,
-        string $milkName
-    ): int {
-        $payload = [
-            'effective_date' => $date,
-            'product_name' => $milkName,
-            'old_qty' => $oldQty,
-            'new_qty' => $newQty,
-        ];
-
-        $meta = [
-            'source' => 'sheet-import',
-            'import_type' => 'daily-exception',
-            'base_scr_id' => $baseScrId,
-        ];
-
-        $existing = DB::table('sub_change_requests')
-            ->where('from_id', $baseScrId)
-            ->where('for_user_id', $forUserId)
-            ->where('subscription_type_id', $subscriptionTypeId)
-            ->where('action', $action)
-            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(payload, '$.effective_date')) = ?", [$date])
-            ->first();
-
-        if ($existing) {
-            DB::table('sub_change_requests')->where('id', $existing->id)->update([
-                'payload' => json_encode($payload),
-                'meta' => json_encode($meta),
-                'updated_at' => now(),
-            ]);
-
-            return (int)$existing->id;
-        }
-
-        return (int) DB::table('sub_change_requests')->insertGetId([
-            'for_user_id' => $forUserId,
-            'by_user_id' => $byUserId,
-            'party_type' => 'consumer',
-            'from_id' => $baseScrId,
-            'draft_order_id' => null,
-            'zone_id' => $zoneId,
-            'subscription_type_id' => $subscriptionTypeId,
-            'subtypes_json' => json_encode([]),
-            'custom_frequency_format' => null,
-            'invoice_cycle' => 'monthly',
-            'change_reason' => 'staff-error',
-            'action' => $action,
-            'status' => 'approved',
-            'approved_by' => $byUserId,
-            'approved_at' => now(),
-            'priority' => 3,
-            'payload' => json_encode($payload),
-            'meta' => json_encode($meta),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-    }
     // -------------------------
     // SCR: 1 per (user, subscription_type_id)
     // -------------------------
@@ -667,37 +532,172 @@ class ImportSheetSubscriptions extends Command
 
         return ['id' => (int)$id, 'created' => true];
     }
+    private function processTimelineDoiBlocks(
+        object $user,
+        array $base,
+        array $g,
+        int $year,
+        int $month,
+        bool $todayOnly,
+        bool $dryRun
+    ): void {
+        foreach (($g['items'] ?? []) as $milkName => $item) {
+            $pv = $this->findProductVariantByMilkName($milkName);
+            if (!$pv) {
+                continue;
+            }
 
+            $days = $item['days'] ?? [];
+            if (empty($days)) {
+                continue;
+            }
+
+            ksort($days);
+
+            $segments = $this->buildDoiSegmentsFromDays(
+                $days,
+                $year,
+                $month,
+                (int)($item['base_qty'] ?? 1),
+                $todayOnly
+            );
+            if (!$dryRun) {
+                DB::table('draft_order_items')
+                    ->where('draft_order_id', (int)$base['draft_order_id'])
+                    ->where('variant_id', (int)$pv['variant_id'])
+                    ->whereNull('vendor_id')
+                    ->delete();
+            }
+
+            foreach ($segments as $seg) {
+                if ($dryRun) {
+                    $this->line(
+                        "DRY DOI: user={$user->id} milk='{$milkName}' "
+                            . "type={$seg['frequency_type']} "
+                            . "qty={$seg['qty']} "
+                            . "start={$seg['start_date']} "
+                            . "end=" . ($seg['end_date'] ?? 'NULL')
+                    );
+                    continue;
+                }
+
+                $this->createTimelineDoi(
+                    (int)$base['draft_order_id'],
+                    (int)$pv['product_id'],
+                    (int)$pv['variant_id'],
+                    (string)$seg['frequency_type'],
+                    (float)$seg['qty'],
+                    (string)$seg['start_date'],
+                    $seg['end_date'],
+                    (float)$pv['unit_price'],
+                    (string)$seg['status']
+                );
+            }
+        }
+    }
+    private function buildDoiSegmentsFromDays(
+        array $days,
+        int $year,
+        int $month,
+        int $baseQty,
+        bool $todayOnly
+    ): array {
+        $segments = [];
+        $current = null;
+
+        $makeDate = function (int $day) use ($year, $month) {
+            return sprintf('%04d-%02d-%02d', $year, $month, $day);
+        };
+
+        ksort($days);
+
+
+
+        foreach ($days as $day => $qtyRaw) {
+            $date = $makeDate((int)$day);
+
+            if ($todayOnly && $date > now()->toDateString()) {
+                continue;
+            }
+
+            $qty = ($qtyRaw === null || $qtyRaw === '') ? 0 : (int)$qtyRaw;
+
+
+
+            $state = [
+                'frequency_type' => 'alternate_days',
+                'qty' => ($qty <= 0 ? 0 : $qty),
+                'status' => ($qty <= 0 ? 'paused' : 'active'),
+            ];
+            if ($current === null) {
+                $current = [
+                    'frequency_type' => $state['frequency_type'],
+                    'qty' => $state['qty'],
+                    'start_date' => $date,
+                    'end_date' => null,
+                    'status' => $state['status'],
+                ];
+                continue;
+            }
+
+            if (
+                (int)$current['qty'] === (int)$state['qty']
+            ) {
+                $current['end_date'] = $date;
+                continue;
+            }
+
+            if ($current['end_date'] === null) {
+                $current['end_date'] = \Carbon\Carbon::parse($date)->subDay()->toDateString();
+            }
+
+            $segments[] = $current;
+
+            $current = [
+                'frequency_type' => $state['frequency_type'],
+                'qty' => $state['qty'],
+                'start_date' => $date,
+                'end_date' => null,
+                'status' => $state['status'],
+            ];
+        }
+
+        if ($current !== null) {
+            $segments[] = $current;
+        }
+
+        return $segments;
+    }
     // -------------------------
-    // Draft Order Items: unique by (draft_order_id, variant_id, vendor_id)
-    // vendor_id is null -> unique constraint still ok
+    // Draft Order Items: timeline rows allowed per draft_order + variant + vendor
+    // uniqueness is enforced by (draft_order_id, variant_id, vendor_id, start_date)
     // -------------------------
-    private function ensureDraftOrderItem(int $draftOrderId, int $productId, int $variantId, float $qty, string $startDate, float $unitPrice): bool
-    {
-        $exists = DB::table('draft_order_items')
-            ->where('draft_order_id', $draftOrderId)
-            ->where('variant_id', $variantId)
-            ->whereNull('vendor_id')
-            ->exists();
-
-        if ($exists) return false;
-
-        DB::table('draft_order_items')->insert([
+    private function createTimelineDoi(
+        int $draftOrderId,
+        int $productId,
+        int $variantId,
+        string $frequencyType,
+        float $qty,
+        string $startDate,
+        ?string $endDate,
+        float $unitPrice,
+        string $status = 'active'
+    ): int {
+        return (int) DB::table('draft_order_items')->insertGetId([
             'draft_order_id' => $draftOrderId,
             'product_id' => $productId,
             'variant_id' => $variantId,
             'vendor_id' => null,
-            'frequency_type' => 'daily',
+            'frequency_type' => $frequencyType,   // daily | alternate_days | custom
             'qty' => $qty,
             'unit' => 'pcs',
             'price_snapshot' => $unitPrice,
             'start_date' => $startDate,
-            'status' => 'active',
+            'end_date' => $endDate,
+            'status' => $status,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
-
-        return true;
     }
 
     // -------------------------
