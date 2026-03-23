@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Throwable;
 use PhpOffice\PhpSpreadsheet\Shared\Date as XlsDate;
+use App\Services\SubscriptionStateTransitionService;
+use App\Models\DraftOrderItem;
 
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
@@ -31,6 +33,12 @@ class ImportSheetSubscriptions extends Command
     {--today-only : Process day exceptions only till today}
 ';
     protected $description = 'Import SCR(1 per subscription_type), Draft Orders, Draft Order Items, Orders(order_type=subscription), Order Items from XLSX using users.phone.';
+
+    public function __construct(
+        protected SubscriptionStateTransitionService $transitionService
+    ) {
+        parent::__construct();
+    }
 
     public function handle(): int
     {
@@ -532,6 +540,27 @@ class ImportSheetSubscriptions extends Command
 
         return ['id' => (int)$id, 'created' => true];
     }
+
+    private function findCurrentOpenDoi(
+        int $draftOrderId,
+        int $variantId,
+        ?int $vendorId = null
+    ): ?DraftOrderItem {
+        return DraftOrderItem::query()
+            ->where('draft_order_id', $draftOrderId)
+            ->where('variant_id', $variantId)
+            ->where('vendor_id', $vendorId)
+            ->whereNull('end_date')
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    private function getSegmentState(array $seg): string
+    {
+        return (($seg['status'] ?? null) === 'paused' || (float)($seg['qty'] ?? 0) <= 0)
+            ? DraftOrderItem::STATUS_PAUSED
+            : DraftOrderItem::STATUS_ACTIVE;
+    }
     private function processTimelineDoiBlocks(
         object $user,
         array $base,
@@ -561,37 +590,148 @@ class ImportSheetSubscriptions extends Command
                 (int)($item['base_qty'] ?? 1),
                 $todayOnly
             );
-            if (!$dryRun) {
-                DB::table('draft_order_items')
-                    ->where('draft_order_id', (int)$base['draft_order_id'])
-                    ->where('variant_id', (int)$pv['variant_id'])
-                    ->whereNull('vendor_id')
-                    ->delete();
+
+            if (empty($segments)) {
+                continue;
             }
 
-            foreach ($segments as $seg) {
-                if ($dryRun) {
+            if ($dryRun) {
+                foreach ($segments as $seg) {
                     $this->line(
                         "DRY DOI: user={$user->id} milk='{$milkName}' "
-                            . "type={$seg['frequency_type']} "
+                            . "type=" . ($seg['frequency_type'] ?? 'NULL') . " "
                             . "qty={$seg['qty']} "
                             . "start={$seg['start_date']} "
-                            . "end=" . ($seg['end_date'] ?? 'NULL')
+                            . "end=" . ($seg['end_date'] ?? 'NULL') . " "
+                            . "status={$seg['status']}"
+                    );
+                }
+                continue;
+            }
+
+            $current = $this->findCurrentOpenDoi(
+                (int)$base['draft_order_id'],
+                (int)$pv['variant_id'],
+                null
+            );
+
+            foreach ($segments as $seg) {
+                $segState = $this->getSegmentState($seg);
+
+                if ($current && (string)$seg['start_date'] <= (string)$current->start_date) {
+                    $this->warn(
+                        "Skipping invalid/backward segment for user={$user->id}, milk='{$milkName}', "
+                            . "seg_start={$seg['start_date']}, current_start={$current->start_date}"
                     );
                     continue;
                 }
 
-                $this->createTimelineDoi(
-                    (int)$base['draft_order_id'],
-                    (int)$pv['product_id'],
-                    (int)$pv['variant_id'],
-                    (string)$seg['frequency_type'],
-                    (float)$seg['qty'],
-                    (string)$seg['start_date'],
-                    $seg['end_date'],
-                    (float)$pv['unit_price'],
-                    (string)$seg['status']
-                );
+                // 1. Bootstrap: no DOI exists yet
+                if (!$current) {
+                    $currentId = $this->createTimelineDoi(
+                        (int)$base['draft_order_id'],
+                        (int)$pv['product_id'],
+                        (int)$pv['variant_id'],
+                        $segState === DraftOrderItem::STATUS_PAUSED ? null : (string)$seg['frequency_type'],
+                        (float)$seg['qty'],
+                        (string)$seg['start_date'],
+                        $seg['end_date'] ?: null,
+                        (float)$pv['unit_price'],
+                        (string)$seg['status']
+                    );
+
+                    $current = DraftOrderItem::query()->find($currentId);
+                    continue;
+                }
+
+                $currentState = $current->status;
+
+                // 2. active -> paused
+                if (
+                    $currentState === DraftOrderItem::STATUS_ACTIVE
+                    && $segState === DraftOrderItem::STATUS_PAUSED
+                ) {
+                    $result = $this->transitionService->pauseActive(
+                        currentDoiId: (int)$current->id,
+                        pauseStartDate: (string)$seg['start_date'],
+                        pauseEndDate: $seg['end_date'] ?: null
+                    );
+
+                    $current = $result['resumed_doi'] ?? $result['paused_doi'];
+                    continue;
+                }
+
+                // 3. paused -> active
+                if (
+                    $currentState === DraftOrderItem::STATUS_PAUSED
+                    && $segState === DraftOrderItem::STATUS_ACTIVE
+                ) {
+                    $result = $this->transitionService->resumePaused(
+                        currentDoiId: (int)$current->id,
+                        resumeStartDate: (string)$seg['start_date'],
+                        qty: (float)$seg['qty'],
+                        frequencyType: (string)$seg['frequency_type'],
+                        resumeEndDate: $seg['end_date'] ?: null
+                    );
+
+                    $current = $result['active_doi'];
+                    continue;
+                }
+
+                // 4. active -> active change
+                if (
+                    $currentState === DraftOrderItem::STATUS_ACTIVE
+                    && $segState === DraftOrderItem::STATUS_ACTIVE
+                ) {
+                    $sameQty = (float)$current->qty === (float)$seg['qty'];
+                    $sameFreq = (string)$current->frequency_type === (string)$seg['frequency_type'];
+
+                    if ($sameQty && $sameFreq) {
+                        continue;
+                    }
+
+                    $result = $this->transitionService->changeActiveToActive(
+                        currentDoiId: (int)$current->id,
+                        changeStartDate: (string)$seg['start_date'],
+                        changeEndDate: $seg['end_date'] ?: null,
+                        newQty: (float)$seg['qty'],
+                        newFrequencyType: (string)$seg['frequency_type']
+                    );
+
+                    $current = $result['restored_doi'] ?? $result['changed_doi'];
+                    continue;
+                }
+
+                // 5. paused -> paused
+                if (
+                    $currentState === DraftOrderItem::STATUS_PAUSED
+                    && $segState === DraftOrderItem::STATUS_PAUSED
+                ) {
+                    $currentStart = (string)$current->start_date;
+                    $newStart = (string)$seg['start_date'];
+                    $newEnd = $seg['end_date'] ?: null;
+
+                    if ($currentStart === $newStart) {
+                        DB::table('draft_order_items')
+                            ->where('id', (int)$current->id)
+                            ->update([
+                                'end_date' => $newEnd,
+                                'updated_at' => now(),
+                            ]);
+
+                        $current = DraftOrderItem::query()->find((int)$current->id);
+                        continue;
+                    }
+
+                    $result = $this->transitionService->extendPause(
+                        currentDoiId: (int)$current->id,
+                        newPauseStartDate: $newStart,
+                        newPauseEndDate: $newEnd
+                    );
+
+                    $current = $result['paused_doi'];
+                    continue;
+                }
             }
         }
     }
@@ -625,9 +765,9 @@ class ImportSheetSubscriptions extends Command
 
 
             $state = [
-                'frequency_type' => 'alternate_days',
+                'frequency_type' => ($qty <= 0 ? null : 'daily'),
                 'qty' => ($qty <= 0 ? 0 : $qty),
-                'status' => ($qty <= 0 ? 'paused' : 'active'),
+                'status' => ($qty <= 0 ? DraftOrderItem::STATUS_PAUSED : DraftOrderItem::STATUS_ACTIVE),
             ];
             if ($current === null) {
                 $current = [
@@ -676,7 +816,7 @@ class ImportSheetSubscriptions extends Command
         int $draftOrderId,
         int $productId,
         int $variantId,
-        string $frequencyType,
+        ?string $frequencyType,
         float $qty,
         string $startDate,
         ?string $endDate,
@@ -688,7 +828,7 @@ class ImportSheetSubscriptions extends Command
             'product_id' => $productId,
             'variant_id' => $variantId,
             'vendor_id' => null,
-            'frequency_type' => $frequencyType,   // daily | alternate_days | custom
+            'frequency_type' => $frequencyType,
             'qty' => $qty,
             'unit' => 'pcs',
             'price_snapshot' => $unitPrice,

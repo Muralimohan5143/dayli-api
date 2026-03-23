@@ -8,10 +8,13 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (!Schema::hasTable('invoices')) {
+            return;
+        }
+
         Schema::table('invoices', function (Blueprint $t) {
 
             if (!Schema::hasColumn('invoices', 'invoice_number')) {
-                // Keep nullable because you already use `number` in old system
                 $t->string('invoice_number')->nullable()->after('number');
                 $t->index('invoice_number', 'invoices_invoice_number_idx');
             }
@@ -25,12 +28,13 @@ return new class extends Migration
                 $t->index('customer_id', 'invoices_customer_id_idx');
             }
 
-            // FK to customers if possible (your invoices has order_id fk already)
-            try {
-                $t->foreign('customer_id', 'invoices_customer_id_fk')
-                    ->references('id')->on('customers')
-                    ->nullOnDelete();
-            } catch (\Throwable $e) {
+            if (Schema::hasTable('customers') && Schema::hasColumn('invoices', 'customer_id')) {
+                try {
+                    $t->foreign('customer_id', 'invoices_customer_id_fk')
+                        ->references('id')->on('customers')
+                        ->nullOnDelete();
+                } catch (\Throwable $e) {
+                }
             }
 
             if (!Schema::hasColumn('invoices', 'billing_name')) {
@@ -44,7 +48,6 @@ return new class extends Migration
             }
 
             if (!Schema::hasColumn('invoices', 'currency')) {
-                // you already have `currency` in orders; for invoices add currency(3)
                 $t->string('currency', 3)->default('INR')->after('buyer_gstin');
             }
 
@@ -76,7 +79,6 @@ return new class extends Migration
                 $t->softDeletes();
             }
 
-            // composite index from your new spec
             try {
                 $t->index(['invoice_date', 'gst_status', 'gst_filing_period'], 'invoices_gst_period_idx');
             } catch (\Throwable $e) {
@@ -86,11 +88,17 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (!Schema::hasTable('invoices')) {
+            return;
+        }
+
         Schema::table('invoices', function (Blueprint $t) {
 
-            try {
-                $t->dropForeign('invoices_customer_id_fk');
-            } catch (\Throwable $e) {
+            if (Schema::hasTable('customers')) {
+                try {
+                    $t->dropForeign('invoices_customer_id_fk');
+                } catch (\Throwable $e) {
+                }
             }
 
             foreach (

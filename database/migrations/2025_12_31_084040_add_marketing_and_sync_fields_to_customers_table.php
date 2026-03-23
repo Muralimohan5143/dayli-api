@@ -8,9 +8,11 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('customers', function (Blueprint $t) {
+        if (!Schema::hasTable('customers')) {
+            return;
+        }
 
-            // After total_amount_due (exists)
+        Schema::table('customers', function (Blueprint $t) {
             if (!Schema::hasColumn('customers', 'marketing_campaign_id')) {
                 $t->unsignedBigInteger('marketing_campaign_id')->nullable()->after('total_amount_due');
                 $t->index('marketing_campaign_id', 'customers_mkt_campaign_idx');
@@ -21,14 +23,13 @@ return new class extends Migration
                 $t->index('marketing_executive_id', 'customers_mkt_exec_idx');
             }
 
-            // add FK safely (might fail if users table different engine etc.)
             try {
                 $t->foreign('marketing_executive_id', 'customers_mkt_exec_fk')
                     ->references('id')->on('users')
                     ->nullOnDelete();
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+            }
 
-            // Put after sync_completed_with (exists)
             if (!Schema::hasColumn('customers', 'clickup_person_id')) {
                 $t->string('clickup_person_id', 64)->nullable()->after('sync_completed_with');
             }
@@ -51,7 +52,6 @@ return new class extends Migration
                 $t->date('last_payment_date')->nullable()->after('geolocation');
             }
 
-            // After profile_metaobject_gid (exists)
             if (!Schema::hasColumn('customers', 'tasks_head_metaobject_gid')) {
                 $t->string('tasks_head_metaobject_gid')->nullable()->after('profile_metaobject_gid');
                 $t->index('tasks_head_metaobject_gid', 'customers_tasks_head_gid_idx');
@@ -65,33 +65,44 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (!Schema::hasTable('customers')) {
+            return;
+        }
+
         Schema::table('customers', function (Blueprint $t) {
-
-            // drop FK
-            try { $t->dropForeign('customers_mkt_exec_fk'); } catch (\Throwable $e) {}
-
-            // drop indexes
-            foreach ([
-                'customers_mkt_exec_idx',
-                'customers_mkt_campaign_idx',
-                'customers_tasks_head_gid_idx',
-            ] as $idx) {
-                try { $t->dropIndex($idx); } catch (\Throwable $e) {}
+            try {
+                $t->dropForeign('customers_mkt_exec_fk');
+            } catch (\Throwable $e) {
             }
 
-            foreach ([
-                'external_refs',
-                'tasks_head_metaobject_gid',
-                'last_payment_date',
-                'geolocation',
-                'area_mf',
-                'phone_mf',
-                'name_mf',
-                'type',
-                'clickup_person_id',
-                'marketing_executive_id',
-                'marketing_campaign_id',
-            ] as $col) {
+            foreach (
+                [
+                    'customers_mkt_exec_idx',
+                    'customers_mkt_campaign_idx',
+                    'customers_tasks_head_gid_idx',
+                ] as $idx
+            ) {
+                try {
+                    $t->dropIndex($idx);
+                } catch (\Throwable $e) {
+                }
+            }
+
+            foreach (
+                [
+                    'external_refs',
+                    'tasks_head_metaobject_gid',
+                    'last_payment_date',
+                    'geolocation',
+                    'area_mf',
+                    'phone_mf',
+                    'name_mf',
+                    'type',
+                    'clickup_person_id',
+                    'marketing_executive_id',
+                    'marketing_campaign_id',
+                ] as $col
+            ) {
                 if (Schema::hasColumn('customers', $col)) {
                     $t->dropColumn($col);
                 }
