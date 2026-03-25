@@ -19,6 +19,8 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\GenerateDailyOrders::class, // ✅ ADD THIS
         \App\Console\Commands\OpsDispatchDueEvents::class, // ✅ ADD THIS
         \App\Console\Commands\SeedDemoMilkSupplies::class,
+        \App\Console\Commands\ImportMergedMilkSheet::class,
+
     ];
     /**
      * Define the application's command schedule.
