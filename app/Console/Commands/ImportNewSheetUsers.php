@@ -71,6 +71,9 @@ class ImportNewSheetUsers extends Command
             return self::FAILURE;
         }
 
+        for ($i = 0; $i < 15; $i++) {
+            array_shift($rows); // skip till row 16
+        }
         $headerRow = array_shift($rows);
         $headersByCol = [];
         foreach ($headerRow as $col => $val) {
@@ -80,7 +83,8 @@ class ImportNewSheetUsers extends Command
         // Required columns
         $colName  = $this->findCol($headersByCol, 'name');
         $colPhone = $this->findCol($headersByCol, 'phone_number');
-        $colAddr  = $this->findCol($headersByCol, 'address_full');
+        $colAddr  = $this->findCol($headersByCol, 'address')
+            ?? $this->findCol($headersByCol, 'address_full');
 
         if (!$colName || !$colPhone || !$colAddr) {
             $this->error("Missing required columns. Found headers: " . implode(', ', array_values($headersByCol)));

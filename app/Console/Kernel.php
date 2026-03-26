@@ -20,6 +20,7 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\OpsDispatchDueEvents::class, // ✅ ADD THIS
         \App\Console\Commands\SeedDemoMilkSupplies::class,
         \App\Console\Commands\ImportMergedMilkSheet::class,
+        \App\Console\Commands\GenerateOrdersFromAllDraftOrders::class,
 
     ];
     /**

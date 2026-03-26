@@ -61,7 +61,7 @@ class ImportMergedMilkSheetService
                     }
 
 
-                    $segments = $this->buildSegments($row, $dateMap);
+                    $segments = $this->buildSegments($row, $dateMap, $parsed['frequency_type']);
 
                     if (empty($segments)) {
                         $summary['skipped']++;
@@ -74,62 +74,65 @@ class ImportMergedMilkSheetService
                     $draftOrder = null;
                     $prevQty = null;
 
-                    foreach ($segments as $index => $segment) {
-                        $action = $this->determineAction($index, $segment['qty'], $prevQty);
-                        $changeReason = $this->determineChangeReason($action);
+                    $baseScr = SubChangeRequest::query()
+                        ->where('for_user_id', $resolved['for_user_id'])
+                        ->where('subscription_type_id', $resolved['subscription_type_id'])
+                        ->first();
 
-                        $scr = SubChangeRequest::create([
+                    if (! $baseScr) {
+                        $baseScr = SubChangeRequest::create([
                             'for_user_id' => $resolved['for_user_id'],
                             'by_user_id' => $resolved['by_user_id'],
                             'party_type' => 'consumer',
                             'from_id' => null,
-                            'draft_order_id' => null, // update after DO created
+                            'draft_order_id' => null,
                             'zone_id' => $resolved['zone_id'],
                             'subscription_type_id' => $resolved['subscription_type_id'],
                             'subtypes_json' => null,
                             'invoice_cycle' => 'monthly',
-                            'change_reason' => $changeReason,
-                            'action' => $action,
+                            'change_reason' => 'staff-error',
+                            'action' => 'create',
                             'status' => 'approved',
                             'meta' => [
                                 'source' => 'merged_milk_sheet_import',
                                 'source_excel_row' => $excelRowNumber,
                                 'customer_name' => $parsed['name'],
                                 'phone' => $parsed['phone'],
-                                'milk' => $parsed['milk'],
-                                'ask_count' => $parsed['ask_count'],
-                                'segment_qty' => $segment['qty'],
-                                'segment_start' => $segment['start_date']->toDateString(),
-                                'segment_end' => $segment['end_date']?->toDateString(),
                             ],
                             'payload' => null,
                         ]);
 
                         $summary['created_scr']++;
+                    }
 
-                        if ($index === 0) {
-                            $baseScr = $scr;
+                    $summary['created_scr']++;
+                    $draftOrder = DraftOrder::query()
+                        ->where('change_request_id', $baseScr->id)
+                        ->first();
 
-                            $draftOrder = DraftOrder::create([
-                                'change_request_id' => $scr->id,
-                                'customer_id' => $resolved['customer_id'],
-                                'zone_id' => $resolved['zone_id'],
-                                'cadence' => 'daily',
-                                'start_date' => $segment['start_date']->toDateString(),
-                                'end_date' => null,
-                                'invoice_cycle' => 'monthly',
-                            ]);
+                    if (! $draftOrder) {
+                        $draftOrder = DraftOrder::create([
+                            'change_request_id' => $baseScr->id,
+                            'customer_id' => $resolved['customer_id'],
+                            'zone_id' => $resolved['zone_id'],
+                            'cadence' => $parsed['frequency_type'],
+                            'start_date' => $segments[0]['start_date']->toDateString(),
+                            'end_date' => null,
+                            'invoice_cycle' => 'monthly',
+                        ]);
 
-                            $summary['created_do']++;
+                        $summary['created_do']++;
 
-                            $scr->update([
-                                'draft_order_id' => $draftOrder->id,
-                            ]);
-                        } else {
-                            $scr->update([
-                                'draft_order_id' => $draftOrder?->id,
-                            ]);
-                        }
+                        $baseScr->update([
+                            'draft_order_id' => $draftOrder->id,
+                        ]);
+                    }
+
+                    $prevQty = null;
+
+                    foreach ($segments as $index => $segment) {
+
+                        $action = $this->determineAction($index, $segment['qty'], $prevQty);
 
                         DraftOrderItem::create([
                             'original_item_id' => null,
@@ -138,7 +141,7 @@ class ImportMergedMilkSheetService
                             'product_id' => $resolved['product_id'],
                             'variant_id' => $resolved['variant_id'],
                             'vendor_id' => $resolved['vendor_id'],
-                            'frequency_type' => 'daily',
+                            'frequency_type' => $parsed['frequency_type'],
                             'qty' => $segment['qty'],
                             'unit' => 'pcs',
                             'price_snapshot' => $resolved['price_snapshot'],
@@ -155,6 +158,7 @@ class ImportMergedMilkSheetService
                         ]);
 
                         $summary['created_doi']++;
+
                         $prevQty = $segment['qty'];
                     }
 
@@ -204,8 +208,8 @@ class ImportMergedMilkSheetService
             'plot_no' => null,
             'milk' => null,
             'ask_count' => null,
+            'frequency_type' => null,
         ];
-
         foreach ($headerRow as $index => $value) {
             $cell = strtolower(trim((string) $value));
             $cell = str_replace(["\n", "\r"], ' ', $cell);
@@ -223,6 +227,12 @@ class ImportMergedMilkSheetService
                 $indexes['milk'] = $index;
             } elseif (str_contains($cell, 'ask') && str_contains($cell, 'count')) {
                 $indexes['ask_count'] = $index;
+            } elseif (
+                $cell === 'frequency_type' ||
+                $cell === 'frequency type' ||
+                str_contains($cell, 'frequency')
+            ) {
+                $indexes['frequency_type'] = $index;
             }
         }
 
@@ -245,6 +255,8 @@ class ImportMergedMilkSheetService
         $plotNo = trim((string)($row[$columnIndexes['plot_no']] ?? ''));
         $milk = trim((string)($row[$columnIndexes['milk']] ?? ''));
         $askCount = $row[$columnIndexes['ask_count']] ?? null;
+        $frequencyTypeRaw = trim((string)($row[$columnIndexes['frequency_type']] ?? 'daily'));
+        $frequencyType = $this->normalizeFrequencyType($frequencyTypeRaw);
 
         if ($name === '' || strtolower($name) === 'name') {
             return null;
@@ -266,9 +278,33 @@ class ImportMergedMilkSheetService
             'plot_no' => $plotNo,
             'milk' => $milk,
             'ask_count' => (float) $askCount,
+            'frequency_type' => $frequencyType,
         ];
     }
-    protected function buildSegments(array $row, array $dateMap): array
+
+    protected function normalizeFrequencyType(?string $value): string
+    {
+        $value = strtolower(trim((string) $value));
+        $value = str_replace([' ', '-'], '_', $value);
+
+        $allowed = [
+            'daily',
+            'alternate_days',
+            'weekdays',
+            'weekends',
+            'sat',
+            'sun',
+            'custom',
+            'on_demand',
+        ];
+
+        if (in_array($value, $allowed, true)) {
+            return $value;
+        }
+
+        return 'daily';
+    }
+    protected function buildSegments(array $row, array $dateMap, string $frequencyType = 'daily'): array
     {
         $dailyStates = [];
 
@@ -295,6 +331,38 @@ class ImportMergedMilkSheetService
 
         if (empty($dailyStates)) {
             return [];
+        }
+        if ($frequencyType !== 'daily') {
+            $firstActiveDate = null;
+            $lastActiveDate = null;
+            $maxQty = 0.0;
+
+            foreach ($dailyStates as $state) {
+                $qty = (float)($state['qty'] ?? 0);
+
+                if ($qty > 0) {
+                    if ($firstActiveDate === null) {
+                        $firstActiveDate = $state['date']->copy();
+                    }
+
+                    $lastActiveDate = $state['date']->copy();
+                    $maxQty = max($maxQty, $qty);
+                }
+            }
+
+            if ($firstActiveDate === null) {
+                return [[
+                    'start_date' => $dailyStates[0]['date'],
+                    'end_date' => null,
+                    'qty' => 0.0,
+                ]];
+            }
+
+            return [[
+                'start_date' => $firstActiveDate,
+                'end_date' => $lastActiveDate,
+                'qty' => $maxQty > 0 ? $maxQty : 1.0,
+            ]];
         }
 
         // ✅ STEP 2 — sort by date
@@ -457,6 +525,17 @@ class ImportMergedMilkSheetService
 
         $pv = $this->findProductVariantByMilkName($parsed['milk']);
 
+        logger()->info('MILK_MAP_DEBUG', [
+            'customer' => $parsed['name'],
+            'phone' => $parsed['phone'],
+            'raw_milk' => $parsed['milk'],
+            'normalized_milk' => $this->normalizeMilkName($parsed['milk']),
+            'product_id' => $pv['product_id'] ?? null,
+            'variant_id' => $pv['variant_id'] ?? null,
+            'product_title' => $pv['title'] ?? null,
+            'variant_title' => $pv['variant_title'] ?? null,
+        ]);
+
         if (! $pv) {
             throw new \RuntimeException("Product mapping not found for milk: {$parsed['milk']}");
         }
@@ -497,6 +576,105 @@ class ImportMergedMilkSheetService
     }
     protected function findProductVariantByMilkName(string $milkName): ?array
     {
+        $normalizedInput = $this->normalizeMilkName($milkName);
+
+        // STEP 1: exact product title match first
+        $products = DB::table('products')
+            ->select('product_id', 'title')
+            ->get();
+
+        foreach ($products as $product) {
+            if ($this->normalizeMilkName((string) $product->title) === $normalizedInput) {
+                $variants = DB::table('variants')
+                    ->select('variant_id', 'product_id', 'title', 'price', 'position')
+                    ->where('product_id', $product->product_id)
+                    ->get();
+
+                // first try exact variant title match
+                foreach ($variants as $variant) {
+                    $combined = $this->normalizeMilkName(
+                        (string) $product->title . ' ' . (string) $variant->title
+                    );
+
+                    if (
+                        $this->normalizeMilkName((string) $variant->title) === $normalizedInput ||
+                        $combined === $normalizedInput
+                    ) {
+                        return [
+                            'product_id' => $product->product_id,
+                            'variant_id' => $variant->variant_id,
+                            'title' => $product->title,
+                            'variant_title' => $variant->title,
+                            'unit_price' => $variant->price,
+                        ];
+                    }
+                }
+
+                // fallback:
+                // if input contains 500ml, prefer 500ml variant
+                // otherwise prefer non-500ml / default variant
+                $wants500 = str_contains($normalizedInput, '500ml') || str_contains($normalizedInput, '500 ml');
+
+                $variant = collect($variants)
+                    ->sortBy('position')
+                    ->first(function ($v) use ($wants500) {
+                        $vt = $this->normalizeMilkName((string) $v->title);
+
+                        if ($wants500) {
+                            return str_contains($vt, '500ml') || str_contains($vt, '500 ml');
+                        }
+
+                        return ! str_contains($vt, '500ml') && ! str_contains($vt, '500 ml');
+                    });
+
+                if (! $variant) {
+                    $variant = collect($variants)->sortBy('position')->first();
+                }
+
+                if ($variant) {
+                    return [
+                        'product_id' => $product->product_id,
+                        'variant_id' => $variant->variant_id,
+                        'title' => $product->title,
+                        'variant_title' => $variant->title,
+                        'unit_price' => $variant->price,
+                    ];
+                }
+            }
+        }
+
+        // STEP 2: exact variant title match
+        $variants = DB::table('variants')
+            ->join('products', 'products.product_id', '=', 'variants.product_id')
+            ->select(
+                'products.product_id',
+                'products.title as product_title',
+                'variants.variant_id',
+                'variants.title as variant_title',
+                'variants.price'
+            )
+            ->get();
+
+        foreach ($variants as $pv) {
+            $combined = $this->normalizeMilkName(
+                (string) $pv->product_title . ' ' . (string) $pv->variant_title
+            );
+
+            if (
+                $this->normalizeMilkName((string) $pv->variant_title) === $normalizedInput ||
+                $combined === $normalizedInput
+            ) {
+                return [
+                    'product_id' => $pv->product_id,
+                    'variant_id' => $pv->variant_id,
+                    'title' => $pv->product_title,
+                    'variant_title' => $pv->variant_title,
+                    'unit_price' => $pv->price,
+                ];
+            }
+        }
+
+        // STEP 3: fallback search terms
         $terms = $this->milkSearchTerms($milkName);
 
         foreach ($terms as $term) {
@@ -507,11 +685,31 @@ class ImportMergedMilkSheetService
                 ->first();
 
             if ($product) {
-                $variant = DB::table('variants')
+                $variants = DB::table('variants')
                     ->select('variant_id', 'product_id', 'title', 'price', 'position')
                     ->where('product_id', $product->product_id)
-                    ->orderBy('position')
-                    ->first();
+                    ->get();
+
+                foreach ($variants as $variant) {
+                    $combined = $this->normalizeMilkName(
+                        (string) $product->title . ' ' . (string) $variant->title
+                    );
+
+                    if (
+                        $this->normalizeMilkName((string) $variant->title) === $normalizedInput ||
+                        $combined === $normalizedInput
+                    ) {
+                        return [
+                            'product_id' => $product->product_id,
+                            'variant_id' => $variant->variant_id,
+                            'title' => $product->title,
+                            'variant_title' => $variant->title,
+                            'unit_price' => $variant->price,
+                        ];
+                    }
+                }
+
+                $variant = $variants->sortBy('position')->first();
 
                 if ($variant) {
                     return [
@@ -535,7 +733,13 @@ class ImportMergedMilkSheetService
                     'variants.title as variant_title',
                     'variants.price'
                 )
-                ->whereRaw('LOWER(variants.title) LIKE ?', ['%' . $term . '%'])
+                ->where(function ($q) use ($term) {
+                    $q->whereRaw('LOWER(variants.title) LIKE ?', ['%' . $term . '%'])
+                        ->orWhereRaw(
+                            "LOWER(CONCAT(products.title, ' ', variants.title)) LIKE ?",
+                            ['%' . $term . '%']
+                        );
+                })
                 ->orderByRaw('LENGTH(variants.title) ASC')
                 ->first();
 
@@ -567,6 +771,8 @@ class ImportMergedMilkSheetService
             'vijaya curd small' => ['vijaya curd small', 'vijaya-curd-small'],
             'hatsun curd' => ['hatsun curd', 'hatsun-curd'],
             'hatsun curd small' => ['hatsun curd small', 'hatsun-curd-small'],
+            'vijaya toned milk' => ['vijaya toned milk', 'vijaya toned', 'toned milk'],
+            'vijaya toned milk 500ml' => ['vijaya toned milk 500ml', 'vijaya toned 500ml', 'toned milk 500ml'],
         ];
 
         foreach ($map as $key => $aliases) {
@@ -586,6 +792,9 @@ class ImportMergedMilkSheetService
 
         // remove telugu/non-ascii noise if present
         $milkName = preg_replace('/[^\x20-\x7E]/u', ' ', $milkName);
+
+        // make brackets behave like spaces
+        $milkName = str_replace(['(', ')', '[', ']', '{', '}'], ' ', $milkName);
 
         $milkName = str_replace(['_', '/', '\\'], ' ', $milkName);
         $milkName = str_replace('-', ' ', $milkName);
