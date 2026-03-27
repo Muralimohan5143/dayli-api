@@ -105,7 +105,7 @@ class ImportMergedMilkSheetService
                         $summary['created_scr']++;
                     }
 
-                    $summary['created_scr']++;
+
                     $draftOrder = DraftOrder::query()
                         ->where('change_request_id', $baseScr->id)
                         ->first();
@@ -133,6 +133,14 @@ class ImportMergedMilkSheetService
                     foreach ($segments as $index => $segment) {
 
                         $action = $this->determineAction($index, $segment['qty'], $prevQty);
+
+                        logger()->info('IMPORT_DOI_DEBUG', [
+                            'customer' => $parsed['name'],
+                            'milk' => $parsed['milk'],
+                            'draft_order_id' => $draftOrder->id,
+                            'product_id' => $resolved['product_id'],
+                            'variant_id' => $resolved['variant_id'],
+                        ]);
 
                         DraftOrderItem::create([
                             'original_item_id' => null,
@@ -577,152 +585,42 @@ class ImportMergedMilkSheetService
     protected function findProductVariantByMilkName(string $milkName): ?array
     {
         $normalizedInput = $this->normalizeMilkName($milkName);
+        $terms = $this->milkSearchTerms($milkName);
 
-        // STEP 1: exact product title match first
-        $products = DB::table('products')
-            ->select('product_id', 'title')
-            ->get();
-
-        foreach ($products as $product) {
-            if ($this->normalizeMilkName((string) $product->title) === $normalizedInput) {
-                $variants = DB::table('variants')
-                    ->select('variant_id', 'product_id', 'title', 'price', 'position')
-                    ->where('product_id', $product->product_id)
-                    ->get();
-
-                // first try exact variant title match
-                foreach ($variants as $variant) {
-                    $combined = $this->normalizeMilkName(
-                        (string) $product->title . ' ' . (string) $variant->title
-                    );
-
-                    if (
-                        $this->normalizeMilkName((string) $variant->title) === $normalizedInput ||
-                        $combined === $normalizedInput
-                    ) {
-                        return [
-                            'product_id' => $product->product_id,
-                            'variant_id' => $variant->variant_id,
-                            'title' => $product->title,
-                            'variant_title' => $variant->title,
-                            'unit_price' => $variant->price,
-                        ];
-                    }
-                }
-
-                // fallback:
-                // if input contains 500ml, prefer 500ml variant
-                // otherwise prefer non-500ml / default variant
-                $wants500 = str_contains($normalizedInput, '500ml') || str_contains($normalizedInput, '500 ml');
-
-                $variant = collect($variants)
-                    ->sortBy('position')
-                    ->first(function ($v) use ($wants500) {
-                        $vt = $this->normalizeMilkName((string) $v->title);
-
-                        if ($wants500) {
-                            return str_contains($vt, '500ml') || str_contains($vt, '500 ml');
-                        }
-
-                        return ! str_contains($vt, '500ml') && ! str_contains($vt, '500 ml');
-                    });
-
-                if (! $variant) {
-                    $variant = collect($variants)->sortBy('position')->first();
-                }
-
-                if ($variant) {
-                    return [
-                        'product_id' => $product->product_id,
-                        'variant_id' => $variant->variant_id,
-                        'title' => $product->title,
-                        'variant_title' => $variant->title,
-                        'unit_price' => $variant->price,
-                    ];
-                }
-            }
-        }
-
-        // STEP 2: exact variant title match
-        $variants = DB::table('variants')
+        // STEP 1: exact / near-exact match on variants first
+        $rows = DB::table('variants')
             ->join('products', 'products.product_id', '=', 'variants.product_id')
             ->select(
                 'products.product_id',
                 'products.title as product_title',
                 'variants.variant_id',
                 'variants.title as variant_title',
-                'variants.price'
+                'variants.price',
+                'variants.position'
             )
             ->get();
 
-        foreach ($variants as $pv) {
-            $combined = $this->normalizeMilkName(
-                (string) $pv->product_title . ' ' . (string) $pv->variant_title
+        foreach ($rows as $row) {
+            $variantNorm = $this->normalizeMilkName((string) $row->variant_title);
+            $combinedNorm = $this->normalizeMilkName(
+                (string) $row->product_title . ' ' . (string) $row->variant_title
             );
 
             if (
-                $this->normalizeMilkName((string) $pv->variant_title) === $normalizedInput ||
-                $combined === $normalizedInput
+                $variantNorm === $normalizedInput ||
+                $combinedNorm === $normalizedInput
             ) {
                 return [
-                    'product_id' => $pv->product_id,
-                    'variant_id' => $pv->variant_id,
-                    'title' => $pv->product_title,
-                    'variant_title' => $pv->variant_title,
-                    'unit_price' => $pv->price,
+                    'product_id' => $row->product_id,
+                    'variant_id' => $row->variant_id,
+                    'title' => $row->product_title,
+                    'variant_title' => $row->variant_title,
+                    'unit_price' => $row->price,
                 ];
             }
         }
 
-        // STEP 3: fallback search terms
-        $terms = $this->milkSearchTerms($milkName);
-
-        foreach ($terms as $term) {
-            $product = DB::table('products')
-                ->select('product_id', 'title')
-                ->whereRaw('LOWER(title) LIKE ?', ['%' . $term . '%'])
-                ->orderByRaw('LENGTH(title) ASC')
-                ->first();
-
-            if ($product) {
-                $variants = DB::table('variants')
-                    ->select('variant_id', 'product_id', 'title', 'price', 'position')
-                    ->where('product_id', $product->product_id)
-                    ->get();
-
-                foreach ($variants as $variant) {
-                    $combined = $this->normalizeMilkName(
-                        (string) $product->title . ' ' . (string) $variant->title
-                    );
-
-                    if (
-                        $this->normalizeMilkName((string) $variant->title) === $normalizedInput ||
-                        $combined === $normalizedInput
-                    ) {
-                        return [
-                            'product_id' => $product->product_id,
-                            'variant_id' => $variant->variant_id,
-                            'title' => $product->title,
-                            'variant_title' => $variant->title,
-                            'unit_price' => $variant->price,
-                        ];
-                    }
-                }
-
-                $variant = $variants->sortBy('position')->first();
-
-                if ($variant) {
-                    return [
-                        'product_id' => $product->product_id,
-                        'variant_id' => $variant->variant_id,
-                        'title' => $product->title,
-                        'variant_title' => $variant->title,
-                        'unit_price' => $variant->price,
-                    ];
-                }
-            }
-        }
-
+        // STEP 2: alias-based search on variants first
         foreach ($terms as $term) {
             $pv = DB::table('variants')
                 ->join('products', 'products.product_id', '=', 'variants.product_id')
@@ -731,7 +629,8 @@ class ImportMergedMilkSheetService
                     'products.title as product_title',
                     'variants.variant_id',
                     'variants.title as variant_title',
-                    'variants.price'
+                    'variants.price',
+                    'variants.position'
                 )
                 ->where(function ($q) use ($term) {
                     $q->whereRaw('LOWER(variants.title) LIKE ?', ['%' . $term . '%'])
@@ -741,6 +640,7 @@ class ImportMergedMilkSheetService
                         );
                 })
                 ->orderByRaw('LENGTH(variants.title) ASC')
+                ->orderBy('variants.position')
                 ->first();
 
             if ($pv) {
@@ -754,6 +654,33 @@ class ImportMergedMilkSheetService
             }
         }
 
+        // STEP 3: last fallback on products.title
+        foreach ($terms as $term) {
+            $product = DB::table('products')
+                ->select('product_id', 'title')
+                ->whereRaw('LOWER(title) LIKE ?', ['%' . $term . '%'])
+                ->orderByRaw('LENGTH(title) ASC')
+                ->first();
+
+            if ($product) {
+                $variant = DB::table('variants')
+                    ->select('variant_id', 'product_id', 'title', 'price', 'position')
+                    ->where('product_id', $product->product_id)
+                    ->orderBy('position')
+                    ->first();
+
+                if ($variant) {
+                    return [
+                        'product_id' => $product->product_id,
+                        'variant_id' => $variant->variant_id,
+                        'title' => $product->title,
+                        'variant_title' => $variant->title,
+                        'unit_price' => $variant->price,
+                    ];
+                }
+            }
+        }
+
         return null;
     }
     protected function milkSearchTerms(string $milkName): array
@@ -763,16 +690,42 @@ class ImportMergedMilkSheetService
         $terms = [$normalized];
 
         $map = [
-            'vijaya gold' => ['vijaya gold', 'vijaya-gold', 'gold milk'],
-            'vijaya tm' => ['vijaya tm', 'vijaya-tm', 'tm milk'],
-            'vijaya tm small' => ['vijaya tm small', 'vijaya-tm-small', 'tm small'],
+            'vijaya gold milk 500 ml' => [
+                'vijaya gold milk 500 ml',
+                'vijaya gold milk 500ml',
+                'vijaya gold 500 ml',
+                'vijaya gold 500ml',
+                'Vijaya Gold Milk(500 ml)',
+
+            ],
+
+
             'arokya gold' => ['arokya gold', 'arokya-gold'],
             'vijaya curd' => ['vijaya curd', 'vijaya-curd'],
             'vijaya curd small' => ['vijaya curd small', 'vijaya-curd-small'],
             'hatsun curd' => ['hatsun curd', 'hatsun-curd'],
             'hatsun curd small' => ['hatsun curd small', 'hatsun-curd-small'],
-            'vijaya toned milk' => ['vijaya toned milk', 'vijaya toned', 'toned milk'],
-            'vijaya toned milk 500ml' => ['vijaya toned milk 500ml', 'vijaya toned 500ml', 'toned milk 500ml'],
+
+            'vijaya toned milk small' => [
+                'vijaya toned milk small',
+                'vijaya toned milk',
+                'vijaya toned',
+                'toned milk small',
+                'vijaya tm small',
+            ],
+
+            'vijaya toned milk 500ml' => [
+                'vijaya toned milk 500ml',
+                'vijaya toned milk 500 ml',
+                'vijaya toned 500ml',
+                'vijaya toned 500 ml',
+                'toned milk 500ml',
+                'toned milk 500 ml',
+            ],
+            'vijaya curd 500 ml' => [
+                'vijaya curd 500 ml',
+                'vijaya curd 500ml',
+            ],
         ];
 
         foreach ($map as $key => $aliases) {

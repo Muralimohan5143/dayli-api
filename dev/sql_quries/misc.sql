@@ -8,5 +8,35 @@ inner join products p on p.product_id=v.product_id
 inner join sub_change_requests scr on do.change_request_id=scr.id
 inner join users u on u.id=scr.for_user_id
 group by doi.draft_order_id, scr.for_user_id, u.display_name,p.title 
-
 order by 3 desc;
+
+
+SELECT
+    scr.for_user_id,
+    doi.draft_order_id,
+    u.display_name,
+    CASE
+        WHEN v.title IS NULL OR v.title = '' OR v.title = 'Default Title'
+            THEN p.title
+        ELSE v.title
+    END AS item_name,
+    COUNT(*) AS total
+FROM dayli.draft_order_items doi
+INNER JOIN draft_orders do
+    ON do.id = doi.draft_order_id
+INNER JOIN variants v
+    ON v.variant_id = doi.variant_id
+INNER JOIN products p
+    ON p.product_id = v.product_id
+INNER JOIN sub_change_requests scr
+    ON do.change_request_id = scr.id
+INNER JOIN users u
+    ON u.id = scr.for_user_id
+GROUP BY
+    scr.for_user_id,
+    doi.draft_order_id,
+    u.display_name,
+    doi.variant_id,
+    v.title,
+    p.title
+ORDER BY u.display_name DESC;
