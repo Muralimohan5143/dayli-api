@@ -340,7 +340,7 @@ class ImportMergedMilkSheetService
         if (empty($dailyStates)) {
             return [];
         }
-        if ($frequencyType !== 'daily') {
+        if ($frequencyType !== 'daily' && $frequencyType !== 'alternate_days') {
             $firstActiveDate = null;
             $lastActiveDate = null;
             $maxQty = 0.0;
@@ -377,6 +377,100 @@ class ImportMergedMilkSheetService
         ksort($dailyStates);
         $dailyStates = array_values($dailyStates);
 
+        if ($frequencyType === 'alternate_days') {
+
+            $segments = [];
+            $count = count($dailyStates);
+
+            // first positive day = initial cadence anchor
+            $anchorIndex = null;
+            for ($i = 0; $i < $count; $i++) {
+                if ((float) ($dailyStates[$i]['qty'] ?? 0) > 0) {
+                    $anchorIndex = $i;
+                    break;
+                }
+            }
+
+            if ($anchorIndex === null) {
+                return [[
+                    'start_date' => $dailyStates[0]['date'],
+                    'end_date'   => null,
+                    'qty'        => 0.0,
+                ]];
+            }
+
+            $blockStates = [];
+            $deliveryToggle = true; // anchor day is delivery day
+
+            for ($i = $anchorIndex; $i < $count; $i++) {
+                $rawQty = (float) ($dailyStates[$i]['qty'] ?? 0);
+
+                if ($deliveryToggle) {
+                    // expected delivery day
+                    if ($rawQty > 0) {
+                        $blockStates[$i] = 1.0;   // active
+                        $deliveryToggle = false;  // next day is natural off-day
+                    } else {
+                        $blockStates[$i] = 0.0;   // paused on delivery day
+                        $deliveryToggle = true;   // next day becomes delivery day
+                    }
+                } else {
+                    // natural off-day inside active alternate cadence
+                    $blockStates[$i] = 1.0;
+                    $deliveryToggle = true;
+                }
+            }
+
+            // leading days before first active = pause
+            for ($i = 0; $i < $anchorIndex; $i++) {
+                $blockStates[$i] = 0.0;
+            }
+
+            $firstActiveIndex = null;
+            foreach ($blockStates as $i => $state) {
+                if ($state > 0) {
+                    $firstActiveIndex = $i;
+                    break;
+                }
+            }
+
+            if ($firstActiveIndex === null) {
+                return [[
+                    'start_date' => $dailyStates[0]['date'],
+                    'end_date'   => null,
+                    'qty'        => 0.0,
+                ]];
+            }
+
+            $currentStart = $dailyStates[$firstActiveIndex]['date'];
+            $currentQty   = $blockStates[$firstActiveIndex];
+            $lastDate     = $dailyStates[$firstActiveIndex]['date'];
+
+            for ($i = $firstActiveIndex + 1; $i < $count; $i++) {
+                $state = $blockStates[$i];
+
+                if ($state !== $currentQty) {
+                    $segments[] = [
+                        'start_date' => $currentStart,
+                        'end_date'   => $lastDate,
+                        'qty'        => $currentQty,
+                    ];
+
+                    $currentStart = $dailyStates[$i]['date'];
+                    $currentQty   = $state;
+                }
+
+                $lastDate = $dailyStates[$i]['date'];
+            }
+
+            $segments[] = [
+                'start_date' => $currentStart,
+                'end_date'   => null,
+                'qty'        => $currentQty,
+            ];
+
+            return $segments;
+        }
         // ✅ STEP 3 — fill missing dates (VERY IMPORTANT)
         $filled = [];
         $start = $dailyStates[0]['date']->copy();
