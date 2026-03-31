@@ -149,7 +149,7 @@ class ImportMergedMilkSheetService
                             'product_id' => $resolved['product_id'],
                             'variant_id' => $resolved['variant_id'],
                             'vendor_id' => $resolved['vendor_id'],
-                            'frequency_type' => $parsed['frequency_type'],
+                            'frequency_type' => $segment['frequency_type'],
                             'qty' => $segment['qty'],
                             'unit' => 'pcs',
                             'price_snapshot' => $resolved['price_snapshot'],
@@ -162,6 +162,8 @@ class ImportMergedMilkSheetService
                                 'customer_name' => $parsed['name'],
                                 'milk' => $parsed['milk'],
                                 'base_ask_count' => $parsed['ask_count'],
+                                'pattern_start_value' => $segment['pattern_start_value'] ?? null,
+                                'pattern_kind' => $segment['pattern_kind'] ?? null,
                             ],
                         ]);
 
@@ -316,221 +318,245 @@ class ImportMergedMilkSheetService
     {
         $dailyStates = [];
 
-        // ✅ STEP 1 — build using DATE KEY (no duplicates)
+        // STEP 1: read exact sheet values as 0/1
         foreach ($dateMap as $colIndex => $date) {
             $value = is_numeric($colIndex) ? ($row[$colIndex] ?? null) : null;
+
             if ($value === null || $value === '') {
-                $qty = 0.0; // ✅ blank = pause
+                $qty = 0.0;
             } else {
-                $qty = $this->normalizeQty($value);
+                $normalized = $this->normalizeQty($value);
+                $qty = $normalized !== null ? (float) $normalized : 0.0;
             }
 
-            $key = $date->toDateString();
-
-            if (isset($dailyStates[$key])) {
-                continue; // skip duplicate same date
-            }
-
-            $dailyStates[$key] = [
-                'date' => $date,
-                'qty'  => $qty,
+            $dailyStates[] = [
+                'date' => $date->copy(),
+                'qty'  => $qty,                    // ✅ REAL VALUE
+                'flag' => $qty > 0 ? 1 : 0,        // ✅ ONLY FOR PATTERN
             ];
         }
 
         if (empty($dailyStates)) {
             return [];
         }
-        if ($frequencyType !== 'daily' && $frequencyType !== 'alternate_days') {
-            $firstActiveDate = null;
-            $lastActiveDate = null;
-            $maxQty = 0.0;
 
-            foreach ($dailyStates as $state) {
-                $qty = (float)($state['qty'] ?? 0);
-
-                if ($qty > 0) {
-                    if ($firstActiveDate === null) {
-                        $firstActiveDate = $state['date']->copy();
-                    }
-
-                    $lastActiveDate = $state['date']->copy();
-                    $maxQty = max($maxQty, $qty);
-                }
+        // STEP 2: ignore leading zero days before first 1
+        $firstPositiveIndex = null;
+        foreach ($dailyStates as $i => $day) {
+            if ((float) $day['qty'] > 0) {
+                $firstPositiveIndex = $i;
+                break;
             }
+        }
 
-            if ($firstActiveDate === null) {
-                return [[
-                    'start_date' => $dailyStates[0]['date'],
-                    'end_date' => null,
-                    'qty' => 0.0,
-                ]];
-            }
-
+        if ($firstPositiveIndex === null) {
             return [[
-                'start_date' => $firstActiveDate,
-                'end_date' => $lastActiveDate,
-                'qty' => $maxQty > 0 ? $maxQty : 1.0,
+                'start_date' => $dailyStates[0]['date']->copy(),
+                'end_date' => null,
+                'qty' => 0.0,
+                'frequency_type' => null,
+                'pattern_start_value' => null,
+                'pattern_kind' => 'pause',
             ]];
         }
 
-        // ✅ STEP 2 — sort by date
-        ksort($dailyStates);
-        $dailyStates = array_values($dailyStates);
+        $dailyStates = array_slice($dailyStates, $firstPositiveIndex);
 
-        if ($frequencyType === 'alternate_days') {
+        // STEP 3: build segments by actual pattern
+        $segments = $this->buildPatternDerivedSegments($dailyStates);
 
-            $segments = [];
-            $count = count($dailyStates);
+        // STEP 4: split active segments again if actual qty changes inside same pattern
+        return $this->splitSegmentsByActualQty($segments, $dailyStates);
+    }
+    protected function splitSegmentsByActualQty(array $segments, array $dailyStates): array
+    {
+        $result = [];
 
-            // first positive day = initial cadence anchor
-            $anchorIndex = null;
-            for ($i = 0; $i < $count; $i++) {
-                if ((float) ($dailyStates[$i]['qty'] ?? 0) > 0) {
-                    $anchorIndex = $i;
-                    break;
-                }
-            }
-
-            if ($anchorIndex === null) {
-                return [[
-                    'start_date' => $dailyStates[0]['date'],
-                    'end_date'   => null,
-                    'qty'        => 0.0,
-                ]];
-            }
-
-            $blockStates = [];
-            $deliveryToggle = true; // anchor day is delivery day
-
-            for ($i = $anchorIndex; $i < $count; $i++) {
-                $rawQty = (float) ($dailyStates[$i]['qty'] ?? 0);
-
-                if ($deliveryToggle) {
-                    // expected delivery day
-                    if ($rawQty > 0) {
-                        $blockStates[$i] = 1.0;   // active
-                        $deliveryToggle = false;  // next day is natural off-day
-                    } else {
-                        $blockStates[$i] = 0.0;   // paused on delivery day
-                        $deliveryToggle = true;   // next day becomes delivery day
-                    }
-                } else {
-                    // natural off-day inside active alternate cadence
-                    $blockStates[$i] = 1.0;
-                    $deliveryToggle = true;
-                }
-            }
-
-            // leading days before first active = pause
-            for ($i = 0; $i < $anchorIndex; $i++) {
-                $blockStates[$i] = 0.0;
-            }
-
-            $firstActiveIndex = null;
-            foreach ($blockStates as $i => $state) {
-                if ($state > 0) {
-                    $firstActiveIndex = $i;
-                    break;
-                }
-            }
-
-            if ($firstActiveIndex === null) {
-                return [[
-                    'start_date' => $dailyStates[0]['date'],
-                    'end_date'   => null,
-                    'qty'        => 0.0,
-                ]];
-            }
-
-            $currentStart = $dailyStates[$firstActiveIndex]['date'];
-            $currentQty   = $blockStates[$firstActiveIndex];
-            $lastDate     = $dailyStates[$firstActiveIndex]['date'];
-
-            for ($i = $firstActiveIndex + 1; $i < $count; $i++) {
-                $state = $blockStates[$i];
-
-                if ($state !== $currentQty) {
-                    $segments[] = [
-                        'start_date' => $currentStart,
-                        'end_date'   => $lastDate,
-                        'qty'        => $currentQty,
-                    ];
-
-                    $currentStart = $dailyStates[$i]['date'];
-                    $currentQty   = $state;
-                }
-
-                $lastDate = $dailyStates[$i]['date'];
-            }
-
-            $segments[] = [
-                'start_date' => $currentStart,
-                'end_date'   => null,
-                'qty'        => $currentQty,
-            ];
-
-            return $segments;
-        }
-        // ✅ STEP 3 — fill missing dates (VERY IMPORTANT)
-        $filled = [];
-        $start = $dailyStates[0]['date']->copy();
-        $end   = end($dailyStates)['date']->copy();
-
-        $map = [];
-        foreach ($dailyStates as $d) {
-            $map[$d['date']->toDateString()] = $d['qty'];
-        }
-
-        for ($d = $start; $d->lte($end); $d->addDay()) {
-            $key = $d->toDateString();
-
-            $filled[] = [
-                'date' => $d->copy(),
-                'qty'  => $map[$key] ?? 0.0,
+        $dayMap = [];
+        foreach ($dailyStates as $day) {
+            $dayMap[$day['date']->toDateString()] = [
+                'qty' => (float) $day['qty'],
+                'flag' => (int) $day['flag'],
             ];
         }
 
-        $dailyStates = $filled;
-
-
-        // ✅ STEP 4 — remove 1-day noise
-
-        // ✅ STEP 5 — segmentation
-        $segments = [];
-
-        $currentStart = $dailyStates[0]['date'];
-        $lastDate     = $dailyStates[0]['date'];
-        $currentQty = $dailyStates[0]['qty'];
-
-        for ($i = 1; $i < count($dailyStates); $i++) {
-            $day = $dailyStates[$i];
-
-
-            if ($currentQty === null) {
-                $currentStart = $day['date'];
-                $currentQty = $day['qty'];
+        foreach ($segments as $segment) {
+            // pause rows stay same
+            if ((float) $segment['qty'] === 0.0) {
+                $result[] = $segment;
                 continue;
             }
 
-            if ($day['qty'] !== $currentQty) {
-                $segments[] = [
-                    'start_date' => $currentStart,
-                    'end_date'   => $lastDate,
-                    'qty'        => $currentQty,
-                ];
+            $start = $segment['start_date']->copy();
+            $end = $segment['end_date']
+                ? $segment['end_date']->copy()
+                : end($dailyStates)['date']->copy();
 
-                $currentStart = $day['date'];
-                $currentQty   = $day['qty'];
+            $currentStart = null;
+            $currentQty = null;
+            $lastIncludedDate = null;
+
+            for ($d = $start->copy(); $d->lte($end); $d->addDay()) {
+                $key = $d->toDateString();
+                $actualQty = isset($dayMap[$key]) ? (float) $dayMap[$key]['qty'] : 0.0;
+                $flag = isset($dayMap[$key]) ? (int) $dayMap[$key]['flag'] : 0;
+
+                // for active segment, only consider delivery days
+                if ($flag === 0) {
+                    continue;
+                }
+
+                if ($currentStart === null) {
+                    $currentStart = $d->copy();
+                    $currentQty = $actualQty;
+                    $lastIncludedDate = $d->copy();
+                    continue;
+                }
+
+                if ((float) $actualQty !== (float) $currentQty) {
+                    $result[] = [
+                        'start_date' => $currentStart->copy(),
+                        'end_date' => $lastIncludedDate->copy(),
+                        'qty' => $currentQty,
+                        'frequency_type' => $segment['frequency_type'],
+                        'pattern_start_value' => $segment['pattern_start_value'] ?? null,
+                        'pattern_kind' => $segment['pattern_kind'] ?? null,
+                    ];
+
+                    $currentStart = $d->copy();
+                    $currentQty = $actualQty;
+                }
+
+                $lastIncludedDate = $d->copy();
             }
 
-            $lastDate = $day['date'];
+            if ($currentStart !== null) {
+                $result[] = [
+                    'start_date' => $currentStart->copy(),
+                    'end_date' => $lastIncludedDate ? $lastIncludedDate->copy() : null,
+                    'qty' => $currentQty,
+                    'frequency_type' => $segment['frequency_type'],
+                    'pattern_start_value' => $segment['pattern_start_value'] ?? null,
+                    'pattern_kind' => $segment['pattern_kind'] ?? null,
+                ];
+            }
         }
 
-        $segments[] = [
-            'start_date' => $currentStart,
-            'end_date'   => null,
-            'qty'        => $currentQty,
-        ];
+        // preserve open-ended last segment
+        if (! empty($result) && ! empty($segments)) {
+            $lastOriginal = end($segments);
+            if (($lastOriginal['end_date'] ?? null) === null) {
+                $result[count($result) - 1]['end_date'] = null;
+            }
+        }
+
+        return $result;
+    }
+    protected function resolveSegmentQty(array $dailyStates, int $start, int $end): float
+    {
+        $max = 0.0;
+
+        for ($k = $start; $k <= $end; $k++) {
+            $max = max($max, (float) $dailyStates[$k]['qty']);
+        }
+
+        return $max;
+    }
+
+    protected function buildPatternDerivedSegments(array $dailyStates): array
+    {
+        $segments = [];
+        $count = count($dailyStates);
+        $i = 0;
+
+        while ($i < $count) {
+            $currentQty = (int) $dailyStates[$i]['flag'];
+
+            // CASE 1: pause run => 0 0 0 0
+            if ($currentQty === 0) {
+                $start = $dailyStates[$i]['date']->copy();
+                $j = $i;
+
+                while ($j + 1 < $count && (int) $dailyStates[$j + 1]['flag'] === 0) {
+                    $j++;
+                }
+
+                $end = $dailyStates[$j]['date']->copy();
+
+                $segments[] = [
+                    'start_date' => $start,
+                    'end_date' => $end,
+                    'qty' => 0.0,
+                    'frequency_type' => null,
+                    'pattern_start_value' => null,
+                    'pattern_kind' => 'pause',
+                ];
+
+                $i = $j + 1;
+                continue;
+            }
+
+            // CASE 2: starts with 1 → maybe daily or alternate
+            $start = $dailyStates[$i]['date']->copy();
+            $startQty = (int) $dailyStates[$i]['flag'];
+
+            // first try to extend DAILY run: 1 1 1 1
+            $jDaily = $i;
+            while ($jDaily + 1 < $count && (int) $dailyStates[$jDaily + 1]['flag'] === 1) {
+                $jDaily++;
+            }
+
+            $dailyLength = $jDaily - $i + 1;
+
+            // then try to extend ALTERNATE run: 1 0 1 0 1 0
+            $jAlt = $i;
+            $expected = 0;
+
+            while ($jAlt + 1 < $count) {
+                $nextQty = (int) $dailyStates[$jAlt + 1]['flag'];
+
+                if ($nextQty !== $expected) {
+                    break;
+                }
+
+                $jAlt++;
+                $expected = $expected === 1 ? 0 : 1;
+            }
+
+            $altLength = $jAlt - $i + 1;
+
+            // choose better pattern
+            // if only one single 1-day row, treat as daily
+            if ($altLength >= 2 && $altLength > $dailyLength) {
+                $segments[] = [
+                    'start_date' => $start,
+                    'end_date' => $dailyStates[$jAlt]['date']->copy(),
+                    'qty' => 1.0,
+                    'frequency_type' => 'alternate_days',
+                    'pattern_start_value' => 1,
+                    'pattern_kind' => 'alternate',
+                ];
+
+                $i = $jAlt + 1;
+                continue;
+            }
+
+            $segments[] = [
+                'start_date' => $start,
+                'end_date' => $dailyStates[$jDaily]['date']->copy(),
+                'qty' => 1.0,
+                'frequency_type' => 'daily',
+                'pattern_start_value' => 1,
+                'pattern_kind' => 'daily',
+            ];
+
+            $i = $jDaily + 1;
+        }
+
+        // make only last segment open-ended
+        if (! empty($segments)) {
+            $segments[count($segments) - 1]['end_date'] = null;
+        }
 
         return $segments;
     }
