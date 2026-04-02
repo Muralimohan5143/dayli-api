@@ -42,7 +42,8 @@ class GenerateDailyOrders extends Command
                 ->join('draft_orders as do', 'do.id', '=', 'doi.draft_order_id')
                 ->join('sub_change_requests as scr', 'scr.id', '=', 'do.change_request_id')
                 ->leftJoin('users as u', 'u.id', '=', 'scr.for_user_id')
-                ->where('do.status', 'active')
+                ->leftJoin('products as p', 'p.product_id', '=', 'doi.product_id')
+                ->leftJoin('variants as v', 'v.variant_id', '=', 'doi.variant_id')
                 ->where('doi.status', 'active')
                 ->whereNotNull('scr.for_user_id')
                 ->whereDate('doi.start_date', '<=', $date)
@@ -57,9 +58,27 @@ class GenerateDailyOrders extends Command
                     'scr.zone_id as zone_id',
                     'do.id as draft_order_id',
                     'doi.id as doi_id',
+                    'doi.product_id',
+                    'doi.variant_id',
+                    'doi.vendor_id',
+                    'doi.qty',
+                    'doi.unit',
+                    'doi.price_snapshot',
                     'doi.frequency_type',
                     'doi.start_date',
+                    'doi.end_date',
+                    'doi.meta',
+
+                    'p.title as product_title',
+                    'p.vendor as brand',
+                    'p.handle as product_handle',
+                    'p.img_src as product_image',
+
+                    'v.sku as sku',
+                    'v.title as variant_title',
                 ])
+                ->orderBy('scr.for_user_id')
+                ->orderBy('doi.id')
                 ->get();
 
             $createdForDate = 0;
@@ -85,14 +104,14 @@ class GenerateDailyOrders extends Command
                 // 🔥 ADD THIS LINE HERE
                 $this->writeLog("DEBUG | customer={$item->customer_id} | date={$date} | freq={$item->frequency_type} | start={$item->start_date}");
 
-                // 🔥 ADD HERE (exact place)
-                if ($item->frequency_type === 'alternate_days') {
-                    $start = Carbon::parse($item->start_date);
+                // // 🔥 ADD HERE (exact place)
+                // if ($item->frequency_type === 'alternate_days') {
+                //     $start = Carbon::parse($item->start_date);
 
-                    if ($start->diffInDays($currentDate) < 0) {
-                        continue;
-                    }
-                }
+                //     if ($start->diffInDays($currentDate) < 0) {
+                //         continue;
+                //     }
+                // }
 
                 $key = $item->customer_id . '_' . $date;
 
@@ -102,50 +121,144 @@ class GenerateDailyOrders extends Command
                         'customer_name' => $item->customer_name,
                         'zone_id' => $item->zone_id,
                         'draft_order_id' => $item->draft_order_id,
+                        'items' => [],
                     ];
                 }
+
+                $grouped[$key]['items'][] = $item;
             }
             foreach ($grouped as $c) {
 
-                $exists = DB::table('orders')
+                $existingOrder = DB::table('orders')
                     ->where('customer_id', $c['customer_id'])
                     ->whereDate('delivery_date', $date)
-                    ->exists();
+                    ->first();
 
-                if ($exists) {
+                if ($existingOrder) {
+                    $orderId = $existingOrder->id;
                     $skippedForDate++;
                     $totalSkipped++;
 
-                    $this->writeLog("[SKIP] order already exists | customer_id={$c['customer_id']} | customer_name={$c['customer_name']} | zone_id={$c['zone_id']} | date={$date}");
-                    continue;
-                }
+                    $this->writeLog("[SKIP ORDER CREATE] order already exists | customer_id={$c['customer_id']} | customer_name={$c['customer_name']} | zone_id={$c['zone_id']} | date={$date}");
+                } else {
+                    if ($isDryRun) {
+                        $createdForDate++;
+                        $totalCreated++;
 
-                if ($isDryRun) {
+                        $message = "[DRY] would create order | customer_id={$c['customer_id']} | customer_name={$c['customer_name']} | zone_id={$c['zone_id']} | draft_order_id={$c['draft_order_id']} | date={$date}";
+                        $this->line($message);
+                        $this->writeLog($message);
+
+                        // simulate order items too
+                        foreach ($c['items'] as $item) {
+                            $message = "[DRY] would create order_item | customer_id={$c['customer_id']} | doi_id={$item->doi_id} | product_id={$item->product_id} | variant_id={$item->variant_id} | qty={$item->qty} | date={$date}";
+                            $this->line($message);
+                            $this->writeLog($message);
+                        }
+
+                        continue;
+                    }
+
+                    $orderNumber = 'ORD-' . str_replace('-', '', $date) . '-' . (int) $c['customer_id'];
+
+                    $orderId = DB::table('orders')->insertGetId([
+                        'order_type' => 'subscription',
+                        'customer_id' => (int) $c['customer_id'],
+                        'zone_id' => $c['zone_id'] ? (int) $c['zone_id'] : null,
+                        'delivery_date' => $date,
+                        'delivery_status' => 'pending',
+                        'draft_order_id' => $c['draft_order_id'] ? (int) $c['draft_order_id'] : null,
+                        'number' => $orderNumber,
+                        'item_count' => 0,
+                        'subtotal' => 0,
+                        'tax' => 0,
+                        'discount' => 0,
+                        'total' => 0,
+                        'status' => 'pending',
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
                     $createdForDate++;
                     $totalCreated++;
 
-                    $message = "[DRY] would create order | customer_id={$c['customer_id']} | customer_name={$c['customer_name']} | zone_id={$c['zone_id']} | draft_order_id={$c['draft_order_id']} | date={$date}";
-                    $this->line($message);
-                    $this->writeLog($message);
+                    $this->writeLog("[CREATE] order created | order_id={$orderId} | customer_id={$c['customer_id']} | customer_name={$c['customer_name']} | zone_id={$c['zone_id']} | draft_order_id={$c['draft_order_id']} | date={$date}");
+                }
+
+                if ($isDryRun) {
                     continue;
                 }
 
-                DB::table('orders')->insert([
-                    'order_type' => 'subscription',
-                    'customer_id' => (int) $c['customer_id'],
-                    'zone_id' => $c['zone_id'] ? (int) $c['zone_id'] : null,
-                    'delivery_date' => $date,
-                    'delivery_status' => 'pending',
-                    'draft_order_id' => $c['draft_order_id'] ? (int) $c['draft_order_id'] : null,
-                    'status' => 'pending',
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                foreach ($c['items'] as $item) {
+                    $existingOrderItem = DB::table('order_items')
+                        ->where('order_id', $orderId)
+                        ->where('product_id', $item->product_id)
+                        ->where('variant_id', $item->variant_id)
+                        ->first();
 
-                $createdForDate++;
-                $totalCreated++;
+                    if ($existingOrderItem) {
+                        $this->writeLog("[SKIP ITEM] order_item already exists | order_id={$orderId} | doi_id={$item->doi_id} | product_id={$item->product_id} | variant_id={$item->variant_id} | date={$date}");
+                        continue;
+                    }
 
-                $this->writeLog("[CREATE] order created | customer_id={$c['customer_id']} | customer_name={$c['customer_name']} | zone_id={$c['zone_id']} | draft_order_id={$c['draft_order_id']} | date={$date}");
+                    DB::table('order_items')->insert([
+                        'order_id' => $orderId,
+                        'product_id' => (int) $item->product_id,
+                        'variant_id' => (int) $item->variant_id,
+
+                        'sku' => $item->sku ?? null,
+                        'title' => $this->buildOrderItemTitle($item->product_title ?? null, $item->variant_title ?? null),
+                        'variant' => $item->variant_title ?? null,
+                        'brand' => $item->brand ?? null,
+                        'product_url' => !empty($item->product_handle)
+                            ? 'https://leelashop.in/products/' . ltrim($item->product_handle, '/')
+                            : null,
+                        'image_url' => $item->product_image ?? null,
+
+                        'quantity' => (int) $item->qty,
+                        'unit_price' => $item->price_snapshot !== null ? (float) $item->price_snapshot : 0,
+                        'line_total' => $item->price_snapshot !== null
+                            ? ((float) $item->qty * (float) $item->price_snapshot)
+                            : 0,
+
+                        'actuals_date' => $date,
+                        'meta' => json_encode([
+                            'doi_id' => $item->doi_id,
+                            'draft_order_id' => $c['draft_order_id'],
+                            'frequency_type' => $item->frequency_type,
+                        ]),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    $this->writeLog("[CREATE ITEM] order_item created | order_id={$orderId} | doi_id={$item->doi_id} | product_id={$item->product_id} | variant_id={$item->variant_id} | qty={$item->qty} | date={$date}");
+                }
+                $orderTotals = DB::table('order_items')
+                    ->where('order_id', $orderId)
+                    ->selectRaw('
+        COALESCE(SUM(quantity), 0) as item_count,
+        COALESCE(SUM(line_total), 0) as subtotal
+    ')
+                    ->first();
+
+                $subtotal = $orderTotals ? (float) $orderTotals->subtotal : 0;
+                $itemCount = $orderTotals ? (int) $orderTotals->item_count : 0;
+                $tax = 0;
+                $discount = 0;
+                $total = $subtotal + $tax - $discount;
+
+                DB::table('orders')
+                    ->where('id', $orderId)
+                    ->update([
+                        'item_count' => $itemCount,
+                        'subtotal' => $subtotal,
+                        'tax' => $tax,
+                        'discount' => $discount,
+                        'total' => $total,
+                        'updated_at' => now(),
+                    ]);
+
+                $this->writeLog("[UPDATE ORDER TOTALS] order_id={$orderId} | item_count={$itemCount} | subtotal={$subtotal} | tax={$tax} | discount={$discount} | total={$total}");
             }
             $summary = "Date {$date} => created: {$createdForDate}, skipped: {$skippedForDate}";
             $this->info($summary);
@@ -218,26 +331,72 @@ class GenerateDailyOrders extends Command
     protected function matchesFrequency($item, Carbon $date): bool
     {
         $start = Carbon::parse($item->start_date);
+        $meta = [];
+
+        if (!empty($item->meta)) {
+            $decoded = json_decode($item->meta, true);
+            if (is_array($decoded)) {
+                $meta = $decoded;
+            }
+        }
 
         return match ($item->frequency_type) {
             'daily' => true,
 
-            'alternate_days' =>
-            $start->diffInDays($date) % 2 === 0,
+            'alternate_days' => $this->matchesAlternatePattern($start, $date, $meta),
 
-            'weekdays' =>
-            $date->isWeekday(),
+            'weekdays' => $date->isWeekday(),
 
-            'weekends' =>
-            $date->isWeekend(),
+            'weekends' => $date->isWeekend(),
 
-            'sat' =>
-            $date->isSaturday(),
+            'sat' => $date->isSaturday(),
 
-            'sun' =>
-            $date->isSunday(),
+            'sun' => $date->isSunday(),
 
             default => false,
         };
+    }
+
+    protected function matchesAlternatePattern(Carbon $start, Carbon $date, array $meta = []): bool
+    {
+        $patternStartValue = (int) ($meta['pattern_start_value'] ?? 1);
+
+        // your final business rule: alternate must start with 1
+        if ($patternStartValue !== 1) {
+            return false;
+        }
+
+        $diff = $start->diffInDays($date);
+
+        return $diff % 2 === 0;
+    }
+    protected function buildOrderItemTitle(?string $productTitle, ?string $variantTitle): string
+    {
+        $productTitle = trim((string) $productTitle);
+        $variantTitle = trim((string) $variantTitle);
+
+        if ($productTitle === '' && $variantTitle === '') {
+            return 'Subscription Item';
+        }
+
+        if ($productTitle === '') {
+            return $variantTitle;
+        }
+
+        if ($variantTitle === '') {
+            return $productTitle;
+        }
+
+        // same text → keep only one
+        if (strcasecmp($productTitle, $variantTitle) === 0) {
+            return $productTitle;
+        }
+
+        // if variant already exists inside product title → keep only product title
+        if (stripos($productTitle, $variantTitle) !== false) {
+            return $productTitle;
+        }
+
+        return $productTitle . ' ' . $variantTitle;
     }
 }
