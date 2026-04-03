@@ -79,19 +79,20 @@ class OtpAuthController extends Controller
             'updated_at' => now(),
         ]);
 
-        //if (!app()->environment(['local', 'testing'])) 
+        if (app()->environment(['local', 'testing'])) 
         {
-            //4️⃣ SEND OTP VIA INTERAKT (WhatsApp)
-            // $result = $interakt->sendOtp($last10, $otp);
-
-            // if (! $result['ok']) {
-            //     return response()->json([
-            //         'message'  => 'Failed to send OTP on WhatsApp',
-            //         'interakt' => $result,   // helpful for debug
-            //     ], 500);
-            // }
+            $last10 = '9885734326';
+         
         }
 
+         $result = $interakt->sendOtp($last10, $otp);
+
+            if (! $result['ok']) {
+                return response()->json([
+                    'message'  => 'Failed to send OTP on WhatsApp',
+                    'interakt' => $result,   // helpful for debug
+                ], 500);
+            }
 
 
         return response()->json([
