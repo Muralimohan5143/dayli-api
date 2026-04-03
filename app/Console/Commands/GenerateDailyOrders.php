@@ -10,6 +10,8 @@ use Carbon\CarbonPeriod;
 
 class GenerateDailyOrders extends Command
 {
+    // php artisan dayli:generate-daily-orders --date=2026-01-01   
+    // php artisan dayli:generate-daily-orders --from=2026-01-01 --to=2026-04-02
     protected $signature = 'dayli:generate-daily-orders {--date=} {--from=} {--to=} {--dry}';
     protected $description = 'Create pending daily orders for active subscriptions';
 

@@ -9,10 +9,9 @@ class DeliveryFeeRule extends Model
     protected $fillable = [
         'product_id',
         'variant_id',
-        'customer_id', // added
-        'title',       // added
-        'fixed_fee',
-        'formula_fee',
+        'customer_id',
+        'title',
+        'fee_formula', // renamed
         'priority',
         'is_active',
     ];

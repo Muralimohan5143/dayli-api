@@ -14,9 +14,10 @@ class ImportMergedMilkSheetService
 {
     /**
      * Rules locked from your sheet logic:
-     * - Jan columns = CW -> BS  (Day 1 -> Day 31)
+     * - Jan columns = CV -> BR  (Day 1 -> Day 31)
      * - Feb columns = BQ -> AP  (Day 1 -> Day 28)
-     * - Mar columns = AO -> Y   (Day 1 -> Day 17)
+     * - Mar columns = AO -> K   (Day 1 -> Day 31)
+     * - Apr columns = J  -> I   (Day 1 -> Day 2)
      * - blank = pause (qty = 0)
      * - positive number = active qty for that day
      * - merge continuous same-qty ranges into one DOI
@@ -142,6 +143,12 @@ class ImportMergedMilkSheetService
                             'variant_id' => $resolved['variant_id'],
                         ]);
 
+                        $segmentPrice = $this->resolveVariantPriceForDate(
+                            (int) $resolved['product_id'],
+                            (int) $resolved['variant_id'],
+                            $segment['start_date']
+                        );
+
                         DraftOrderItem::create([
                             'original_item_id' => null,
                             'change_action' => $action,
@@ -152,7 +159,7 @@ class ImportMergedMilkSheetService
                             'frequency_type' => $segment['frequency_type'],
                             'qty' => $segment['qty'],
                             'unit' => 'pcs',
-                            'price_snapshot' => $resolved['price_snapshot'],
+                            'price_snapshot' => $segmentPrice,
                             'start_date' => $segment['start_date']->toDateString(),
                             'end_date' => $segment['end_date']?->toDateString(),
                             'status' => $segment['qty'] > 0 ? 'active' : 'paused',
@@ -565,24 +572,31 @@ class ImportMergedMilkSheetService
         $map = [];
 
         // JAN block
-        // Day 1 = col 100 ... Day 31 = col 70
+        // Day 1 = CV (99) ... Day 31 = BR (69)
         for ($day = 1; $day <= 31; $day++) {
-            $colIndex = 100 - $day; // 1->100, 31->70
+            $colIndex = 100 - $day; // 1->99, 31->69
             $map[$colIndex] = Carbon::create(2026, 1, $day);
         }
 
         // FEB block
-        // Day 1 = col 68 ... Day 28 = col 41
+        // Day 1 = BQ (68) ... Day 28 = AP (41)
         for ($day = 1; $day <= 28; $day++) {
             $colIndex = 69 - $day; // 1->68, 28->41
             $map[$colIndex] = Carbon::create(2026, 2, $day);
         }
 
         // MAR block
-        // Day 1 = col 40 ... Day 17 = col 24
-        for ($day = 1; $day <= 17; $day++) {
-            $colIndex = 41 - $day; // 1->40, 17->24
+        // Day 1 = AO (40) ... Day 31 = K (10)
+        for ($day = 1; $day <= 31; $day++) {
+            $colIndex = 41 - $day; // 1->40, 31->10
             $map[$colIndex] = Carbon::create(2026, 3, $day);
+        }
+
+        // APR block
+        // Day 1 = J (9) ... Day 2 = I (8)
+        for ($day = 1; $day <= 2; $day++) {
+            $colIndex = 10 - $day; // 1->9, 2->8
+            $map[$colIndex] = Carbon::create(2026, 4, $day);
         }
 
         return $map;
@@ -633,6 +647,35 @@ class ImportMergedMilkSheetService
     /**
      * Replace this with your actual lookups.
      */
+
+    protected function resolveVariantPriceForDate(int $productId, int $variantId, Carbon $date): ?float
+    {
+        $dateTime = $date->copy()->endOfDay()->toDateTimeString();
+
+        $history = DB::table('variant_price_history')
+            ->where('product_id', $productId)
+            ->where('variant_id', $variantId)
+            ->where('effective_from', '<=', $dateTime)
+            ->where(function ($q) use ($dateTime) {
+                $q->whereNull('effective_to')
+                    ->orWhere('effective_to', '>=', $dateTime);
+            })
+            ->orderByDesc('effective_from')
+            ->first();
+
+        if ($history) {
+            return (float) $history->price;
+        }
+
+        $variant = DB::table('variants')
+            ->where('variant_id', $variantId)
+            ->first();
+
+        return $variant && $variant->price !== null
+            ? (float) $variant->price
+            : null;
+    }
+
     protected function resolveReferences(array $parsed, array $context): array
     {
         $phone = $this->normalizePhone($parsed['phone']);

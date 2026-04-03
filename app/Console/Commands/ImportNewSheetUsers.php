@@ -20,6 +20,8 @@ class ImportNewSheetUsers extends Command
     ';
 
 
+
+    //php artisan import:new-sheet-users "C:\Users\mandl\Downloads\New Microsoft Excel Worksheet.xlsx" --default-zone=1
     // this file is for importing UNIQUE users from a sheet with columns: display_name/name=Name, phone=Phone Number, address=Address Full (into users table only). It does not handle orders or other related data. Use with --dry-run first to verify column mapping and data parsing. For large files, consider splitting into smaller chunks. Always backup your database before running imports.
 
     //command for insert users table

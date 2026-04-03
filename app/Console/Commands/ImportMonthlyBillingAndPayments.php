@@ -69,24 +69,81 @@ class ImportMonthlyBillingAndPayments extends Command
      *      IF(OR(arokya,small), delivery_count, quotient(delivery_count, 25) * 50)
      * )
      */
-    private function computeDeliveryFee(int $deliveryCount, string $milkType): int
+    private function computeDeliveryFee(
+        int $deliveryCount,
+        ?int $productId,
+        ?int $variantId,
+        ?int $customerId
+    ): float {
+        $rule = $this->findDeliveryFeeRule($productId, $variantId, $customerId);
+
+        if (!$rule || empty($rule->fee_formula)) {
+            return 0.0;
+        }
+
+        return $this->evaluateFeeFormula((string) $rule->fee_formula, [
+            'qty' => max($deliveryCount, 0),
+        ]);
+    }
+
+    private function findDeliveryFeeRule(?int $productId, ?int $variantId, ?int $customerId): ?object
     {
-        $t = Str::of($milkType)->lower();
-        $isArokya = $t->contains('arokya');
-        $isSmall = $t->contains('small');
-
-        $q = intdiv(max($deliveryCount, 0), 25); // quotient
-
-        if ($q < 1) {
-            $rate = ($isArokya || $isSmall) ? 1 : 2;
-            return $deliveryCount * $rate;
+        if (!$productId) {
+            return null;
         }
 
-        if ($isArokya || $isSmall) {
-            return $deliveryCount;
+        return DB::table('delivery_fee_rules')
+            ->where('is_active', 1)
+            ->where('product_id', $productId)
+            ->where(function ($q) use ($variantId) {
+                if ($variantId) {
+                    $q->where('variant_id', $variantId)
+                        ->orWhereNull('variant_id');
+                } else {
+                    $q->whereNull('variant_id');
+                }
+            })
+            ->where(function ($q) use ($customerId) {
+                if ($customerId) {
+                    $q->where('customer_id', $customerId)
+                        ->orWhereNull('customer_id');
+                } else {
+                    $q->whereNull('customer_id');
+                }
+            })
+            ->orderByRaw("
+            CASE
+                WHEN customer_id IS NOT NULL AND variant_id IS NOT NULL THEN 4
+                WHEN customer_id IS NOT NULL AND variant_id IS NULL THEN 3
+                WHEN customer_id IS NULL AND variant_id IS NOT NULL THEN 2
+                ELSE 1
+            END DESC
+        ")
+            ->orderByDesc('priority')
+            ->first();
+    }
+
+    private function evaluateFeeFormula(string $formula, array $context): float
+    {
+        $qty = (float) ($context['qty'] ?? 0);
+
+        $normalized = preg_replace('/\s+/', '', strtolower($formula));
+
+        if (preg_match('/[^0-9qtyfloor\+\-\*\/\(\)\?\:\<\>\=\!\.\s]/', $normalized)) {
+            throw new \RuntimeException('Unsafe fee formula detected.');
         }
 
-        return $q * 50;
+        $expr = str_ireplace('qty', '$qty', $formula);
+
+        try {
+            $result = (function () use ($expr, $qty) {
+                return eval('return ' . $expr . ';');
+            })();
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('Fee formula evaluation failed: ' . $e->getMessage(), 0, $e);
+        }
+
+        return round((float) $result, 2);
     }
 
     private function generateInvoices(string $monthStart, string $monthEnd, string $invoiceDate, bool $dryRun): int
@@ -99,15 +156,17 @@ class ImportMonthlyBillingAndPayments extends Command
             ->where('oi.actuals_date', '>=', $monthStart)
             ->where('oi.actuals_date', '<', $monthEnd)
             ->selectRaw('
-              o.customer_id as user_id,
-                MIN(o.id) as any_order_id,
-                MIN(o.order_type) as any_order_type,
-                oi.title as title,
-                SUM(oi.quantity) as monthly_count,
-                AVG(oi.unit_price) as unit_price_avg,
-                SUM(oi.line_total) as line_total_sum
-            ')
-            ->groupBy('o.customer_id', 'oi.title')
+        o.customer_id as user_id,
+        MIN(o.id) as any_order_id,
+        MIN(o.order_type) as any_order_type,
+        oi.product_id as product_id,
+        oi.variant_id as variant_id,
+        oi.title as title,
+        SUM(oi.quantity) as monthly_count,
+        AVG(oi.unit_price) as unit_price_avg,
+        SUM(oi.line_total) as line_total_sum
+    ')
+            ->groupBy('o.customer_id', 'oi.product_id', 'oi.variant_id', 'oi.title')
             ->orderBy('o.customer_id')
             ->get();
 
@@ -143,11 +202,17 @@ class ImportMonthlyBillingAndPayments extends Command
             $deliveryFeeTotal = 0;
 
             foreach ($payload['items'] as $it) {
-                $subtotal += (float)$it->line_total_sum;
+                $subtotal += (float) $it->line_total_sum;
 
                 // delivery_count: best available is monthly_count (like sheet)
-                $deliveryCount = (int) round((float)$it->monthly_count);
-                $deliveryFeeTotal += $this->computeDeliveryFee($deliveryCount, (string)$it->title);
+                $deliveryCount = (int) round((float) $it->monthly_count);
+
+                $deliveryFeeTotal += $this->computeDeliveryFee(
+                    $deliveryCount,
+                    isset($it->product_id) ? (int) $it->product_id : null,
+                    isset($it->variant_id) ? (int) $it->variant_id : null,
+                    (int) $uid
+                );
             }
 
             // 2) Previous dues = (historical invoices grand_total) - (historical payments amount)

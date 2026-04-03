@@ -18,6 +18,8 @@ class ImportMergedMilkSheet extends Command
 
     protected $description = 'Import merged milk sheet into SCR, Draft Orders, and DOIs';
 
+    // php artisan import:merged-milk-sheet "C:\Users\mandl\Downloads\New Microsoft Excel Worksheet.xlsx"
+
     public function handle(ImportMergedMilkSheetService $service)
     {
         $file = $this->argument('file');
