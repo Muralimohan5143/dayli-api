@@ -40,3 +40,11 @@ GROUP BY
     v.title,
     p.title
 ORDER BY u.display_name DESC;
+
+
+SELECT -- *
+distinct subscription_type_id,users.id,users.zone_id
+ FROM dayli.model_has_roles
+inner join users on users.id=model_has_roles.model_id 
+inner join sub_change_requests scr on scr.zone_id=users.zone_id 
+where role_id=4;

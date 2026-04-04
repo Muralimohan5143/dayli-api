@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\UserServiceController;
 use App\Http\Controllers\SesWebhookController;
 use App\Http\Controllers\Api\DeviceTokenController;
+use App\Http\Controllers\Api\OutboxReportController;
 use App\Services\FcmService;
 
 /*
@@ -126,6 +127,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/inward-payment', [AdminBillingController::class, 'storeInwardPayment']);
         Route::post('/inward-payment-auto', [AdminBillingController::class, 'storeInwardPaymentAuto']);
         Route::post('/inward-payment-allocations', [AdminBillingController::class, 'storeInwardPaymentAllocations']);
+    });
+
+    Route::prefix('zone-manager')->group(function () {
+        Route::get('/outbox-reports', [OutboxReportController::class, 'index']);
+        Route::get('/outbox-reports/{id}', [OutboxReportController::class, 'show']);
+        Route::post('/outbox-reports/{id}/generate', [OutboxReportController::class, 'generate']);
     });
 
     // --------------------------

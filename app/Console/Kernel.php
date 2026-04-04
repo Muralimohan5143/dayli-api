@@ -48,6 +48,8 @@ class Kernel extends ConsoleKernel
         $schedule->command('ops:dispatch-due --batch=50 --lock-ttl=10')
             ->everyMinute()
             ->withoutOverlapping(1); // 1 minute overlap lock
+
+        $schedule->command('reports:generate-outbox')->monthlyOn(1, '05:30');
     }
 
     /**
