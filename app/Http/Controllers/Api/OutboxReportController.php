@@ -24,9 +24,20 @@ class OutboxReportController extends Controller
             $query->where('status', $request->string('status'));
         }
 
+        $rows = $query->get()->map(function ($report) {
+            $subscriptionTypeName = DB::table('subscription_types')
+                ->where('id', $report->subscription_type_id)
+                ->value('name');
+
+            $arr = $report->toArray();
+            $arr['subscription_type_name'] = $subscriptionTypeName;
+
+            return $arr;
+        });
+
         return response()->json([
             'ok' => true,
-            'data' => $query->get(),
+            'data' => $rows,
         ]);
     }
 
@@ -40,6 +51,9 @@ class OutboxReportController extends Controller
 
         $zoneId = (int) data_get($report->payload_json, 'zone_id');
         $subscriptionTypeId = (int) $report->subscription_type_id;
+        $subscriptionTypeName = DB::table('subscription_types')
+            ->where('id', $subscriptionTypeId)
+            ->value('name');
         $start = Carbon::parse($report->start_date)->toDateString();
         $end = Carbon::parse($report->end_date)->toDateString();
 
@@ -124,7 +138,9 @@ class OutboxReportController extends Controller
 
         return response()->json([
             'ok' => true,
-            'report' => $report,
+            'report' => array_merge($report->toArray(), [
+                'subscription_type_name' => $subscriptionTypeName,
+            ]),
             'customers' => $grouped,
         ]);
     }
@@ -139,6 +155,9 @@ class OutboxReportController extends Controller
 
         $zoneId = (int) data_get($report->payload_json, 'zone_id');
         $subscriptionTypeId = (int) $report->subscription_type_id;
+        // $subscriptionTypeName = DB::table('subscription_types')
+        //     ->where('id', $subscriptionTypeId)
+        //     ->value('name');
         $start = Carbon::parse($report->start_date)->toDateString();
         $endExclusive = Carbon::parse($report->end_date)->addDay()->toDateString();
 

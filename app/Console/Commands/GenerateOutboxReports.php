@@ -15,90 +15,66 @@ class GenerateOutboxReports extends Command
 
     public function handle(): int
     {
-        [$start, $end] = $this->resolveMonthRange();
+        $month = $this->option('month');
 
-        $this->info(
-            "Generating outbox reports for {$start->toDateString()} to {$end->toDateString()}"
-        );
+        if ($month) {
+            [$start, $end] = $this->resolveMonthRange();
 
-        // $zoneManagerMap = $this->getZoneManagerMap();
+            $this->info(
+                "Generating outbox reports for {$start->toDateString()} to {$end->toDateString()}"
+            );
 
-        // if ($zoneManagerMap->isEmpty()) {
-        //     $this->warn('No zone-manager to zone mapping found.');
-        //     $this->warn('Check users table role assignment and zones.manager_id mapping.');
-        //     return self::SUCCESS;
-        // }
+            $stats = $this->generateForMonth($start, $end);
 
-        $rows = $this->getMonthlyReportSourceRows($start, $end);
+            $this->newLine();
+            $this->info(
+                "Done for {$start->format('Y-m')}. created={$stats['created']}, updated={$stats['updated']}, skipped={$stats['skipped']}"
+            );
 
-        if ($rows->isEmpty()) {
-            $this->warn('No eligible order data found for the given period.');
             return self::SUCCESS;
         }
 
-        $created = 0;
-        $updated = 0;
-        $skipped = 0;
+        $firstMonth = $this->getFirstOrderMonth();
 
-        foreach ($rows as $row) {
-            $zoneId = (int) $row->zone_id;
-            $subscriptionTypeId = (int) $row->subscription_type_id;
+        if (!$firstMonth) {
+            $this->warn('No order data found.');
+            return self::SUCCESS;
+        }
 
-            if (!$zoneId || !$subscriptionTypeId) {
-                $skipped++;
-                $this->line(
-                    "Skipped invalid row | zone_id={$row->zone_id} | subscription_type_id={$row->subscription_type_id}"
-                );
-                continue;
-            }
+        $lastCompletedMonth = now()->subMonthNoOverflow()->startOfMonth();
 
-            $zoneManagerId = 11306;
+        if ($firstMonth->gt($lastCompletedMonth)) {
+            $this->warn('No completed months available yet.');
+            return self::SUCCESS;
+        }
 
-            // if (!$zoneManagerId) {
-            //     $skipped++;
-            //     $this->line(
-            //         "Skipped no zone-manager mapping | zone_id={$zoneId} | sub_type={$subscriptionTypeId}"
-            //     );
-            //     continue;
-            // }
+        $totalCreated = 0;
+        $totalUpdated = 0;
+        $totalSkipped = 0;
 
-            $attributes = [
-                'zone_manager_id' => (int) $zoneManagerId,
-                'report_type' => 'monthly_invoice',
-                'subscription_type_id' => $subscriptionTypeId,
-                'service_type_id' => null,
-                'start_date' => $start->toDateString(),
-                'end_date' => $end->toDateString(),
-            ];
+        $cursor = $firstMonth->copy();
 
-            $values = [
-                'status' => 'pending',
-                'payload_json' => [
-                    'month' => $start->format('Y-m'),
-                    'zone_id' => $zoneId,
-                    'subscription_type_id' => $subscriptionTypeId,
-                    'item_count' => (int) $row->item_count,
-                    'order_count' => (int) $row->order_count,
-                ],
-            ];
+        while ($cursor->lte($lastCompletedMonth)) {
+            $start = $cursor->copy()->startOfMonth();
+            $end = $cursor->copy()->endOfMonth();
 
-            $report = OutboxReport::updateOrCreate($attributes, $values);
+            $this->info(
+                "Checking/generating outbox reports for {$start->toDateString()} to {$end->toDateString()}"
+            );
 
-            if ($report->wasRecentlyCreated) {
-                $created++;
-                $this->info(
-                    "Created | zm={$zoneManagerId} | zone={$zoneId} | sub_type={$subscriptionTypeId}"
-                );
-            } else {
-                $updated++;
-                $this->line(
-                    "Updated existing | zm={$zoneManagerId} | zone={$zoneId} | sub_type={$subscriptionTypeId}"
-                );
-            }
+            $stats = $this->generateForMonth($start, $end);
+
+            $totalCreated += $stats['created'];
+            $totalUpdated += $stats['updated'];
+            $totalSkipped += $stats['skipped'];
+
+            $cursor->addMonthNoOverflow();
         }
 
         $this->newLine();
-        $this->info("Done. created={$created}, updated={$updated}, skipped={$skipped}");
+        $this->info(
+            "Done. created={$totalCreated}, updated={$totalUpdated}, skipped={$totalSkipped}"
+        );
 
         return self::SUCCESS;
     }
@@ -129,6 +105,92 @@ class GenerateOutboxReports extends Command
         }
 
         return [$start, $end];
+    }
+
+    protected function getFirstOrderMonth(): ?Carbon
+    {
+        $minDate = DB::table('order_items')
+            ->whereNotNull('actuals_date')
+            ->min('actuals_date');
+
+        if (!$minDate) {
+            return null;
+        }
+
+        return Carbon::parse($minDate)->startOfMonth();
+    }
+
+    protected function generateForMonth(Carbon $start, Carbon $end): array
+    {
+        $rows = $this->getMonthlyReportSourceRows($start, $end);
+
+        if ($rows->isEmpty()) {
+            $this->warn("No eligible order data found for {$start->format('Y-m')}.");
+            return [
+                'created' => 0,
+                'updated' => 0,
+                'skipped' => 0,
+            ];
+        }
+
+        $created = 0;
+        $updated = 0;
+        $skipped = 0;
+
+        foreach ($rows as $row) {
+            $zoneId = (int) $row->zone_id;
+            $subscriptionTypeId = (int) $row->subscription_type_id;
+
+            if (!$zoneId || !$subscriptionTypeId) {
+                $skipped++;
+                $this->line(
+                    "Skipped invalid row | zone_id={$row->zone_id} | subscription_type_id={$row->subscription_type_id}"
+                );
+                continue;
+            }
+
+            $zoneManagerId = 11306;
+
+            $attributes = [
+                'zone_manager_id' => (int) $zoneManagerId,
+                'report_type' => 'monthly_invoice',
+                'subscription_type_id' => $subscriptionTypeId,
+                'service_type_id' => null,
+                'start_date' => $start->toDateString(),
+                'end_date' => $end->toDateString(),
+            ];
+
+            $values = [
+                'status' => 'pending',
+                'payload_json' => [
+                    'month' => $start->format('Y-m'),
+                    'zone_id' => $zoneId,
+                    'subscription_type_id' => $subscriptionTypeId,
+                    'item_count' => (int) $row->item_count,
+                    'order_count' => (int) $row->order_count,
+                ],
+            ];
+
+            $report = OutboxReport::updateOrCreate($attributes, $values);
+
+            if ($report->wasRecentlyCreated) {
+                $created++;
+                $this->info(
+                    "Created | month={$start->format('Y-m')} | zm={$zoneManagerId} | zone={$zoneId} | sub_type={$subscriptionTypeId}"
+                );
+            } else {
+                $updated++;
+                $this->line(
+                    "Updated existing | month={$start->format('Y-m')} | zm={$zoneManagerId} | zone={$zoneId} | sub_type={$subscriptionTypeId}"
+                );
+            }
+        }
+
+        return [
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => $skipped,
+        ];
     }
 
     /**
