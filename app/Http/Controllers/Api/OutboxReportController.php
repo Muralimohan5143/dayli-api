@@ -166,26 +166,196 @@ class OutboxReportController extends Controller
             'processed_at' => now(),
         ]);
 
-        $count = $service->generateForReport(
-            zoneId: $zoneId,
-            subscriptionTypeId: $subscriptionTypeId,
-            monthStart: $start,
-            monthEndExclusive: $endExclusive,
-        );
-
-        $report->update([
-            'status' => 'generated',
-            'generated_at' => now(),
-            'payload_json' => array_merge($report->payload_json ?? [], [
-                'generated_invoice_count' => $count,
+        DB::table('outbox_events')->insert([
+            'event_type'     => 'report.invoice.generate',
+            'aggregate_type' => 'outbox_report',
+            'aggregate_id'   => $report->id,
+            'payload'        => json_encode([
+                'report_id' => $report->id,
+                'zone_id' => $zoneId,
+                'subscription_type_id' => $subscriptionTypeId,
+                'start_date' => $start,
+                'end_date_exclusive' => $endExclusive,
+                'auto_send' => $request->boolean('auto_send'), // ✅ ADD THIS LINE
             ]),
+            'status'         => 'pending',
+            'priority'       => 1,
+            'attempts'       => 0,
+            'max_attempts'   => 3,
+            'scheduled_at'   => now(),
+            'created_at'     => now(),
+            'updated_at'     => now(),
         ]);
 
         return response()->json([
             'ok' => true,
-            'message' => 'Invoices generated successfully.',
-            'count' => $count,
+            'message' => 'Invoice generation queued. Processing will happen shortly.',
             'report' => $report->fresh(),
+        ]);
+    }
+
+    public function send(Request $request, int $id)
+    {
+        $user = $request->user();
+
+        $report = OutboxReport::query()
+            ->where('zone_manager_id', $user->id)
+            ->findOrFail($id);
+
+        $zoneId = (int) data_get($report->payload_json, 'zone_id');
+        $subscriptionTypeId = (int) $report->subscription_type_id;
+        $start = Carbon::parse($report->start_date)->toDateString();
+        $end = Carbon::parse($report->end_date)->toDateString();
+
+        $customers = DB::table('order_items as oi')
+            ->join('orders as o', 'o.id', '=', 'oi.order_id')
+            ->join('variants as v', 'v.variant_id', '=', 'oi.variant_id')
+            ->join('products as p', 'p.product_id', '=', 'v.product_id')
+            ->join('subscription_sub_types as sst', 'sst.slug', '=', 'p.product_sub_type')
+            ->leftJoin('users as u', 'u.id', '=', 'o.customer_id')
+            ->select(
+                'o.customer_id',
+                'u.phone',
+                DB::raw("COALESCE(u.display_name, u.name, CONCAT(COALESCE(u.first_name,''), ' ', COALESCE(u.last_name,''))) as customer_name"),
+                DB::raw('SUM(oi.line_total) as subtotal')
+            )
+            ->where('o.zone_id', $zoneId)
+            ->where('sst.subscription_type_id', $subscriptionTypeId)
+            ->whereBetween('oi.actuals_date', [$start, $end])
+            ->groupBy(
+                'o.customer_id',
+                'u.phone',
+                'u.display_name',
+                'u.name',
+                'u.first_name',
+                'u.last_name'
+            )
+            ->get();
+
+        if ($customers->isEmpty()) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'No customers found for this report.',
+            ], 422);
+        }
+
+        $queued = 0;
+
+        foreach ($customers as $customer) {
+            if (empty($customer->phone)) {
+                continue;
+            }
+
+            DB::table('outbox_events')->insert([
+                'event_type'     => 'report.invoice.send',
+                'aggregate_type' => 'outbox_report',
+                'aggregate_id'   => $report->id,
+                'payload'        => json_encode([
+                    'report_id' => $report->id,
+                    'customer_id' => (int) $customer->customer_id,
+                    'customer_name' => $customer->customer_name,
+                    'phone' => $customer->phone,
+                    'zone_id' => $zoneId,
+                    'subscription_type_id' => $subscriptionTypeId,
+                    'start_date' => $start,
+                    'end_date' => $end,
+                ]),
+                'status'         => 'pending',
+                'priority'       => 1,
+                'attempts'       => 0,
+                'max_attempts'   => 3,
+                'scheduled_at'   => now(),
+                'created_at'     => now(),
+                'updated_at'     => now(),
+            ]);
+
+            $queued++;
+        }
+
+        $report->update([
+            'processed_at' => now(),
+        ]);
+
+        return response()->json([
+            'ok' => true,
+            'message' => "Invoice sending queued for {$queued} customers.",
+            'count' => $queued,
+            'report' => $report->fresh(),
+        ]);
+    }
+    public function myInvoices(Request $request)
+    {
+        $user = $request->user();
+
+        $start = $request->query('start_date');
+        $end = $request->query('end_date');
+        $subscriptionTypeId = (int) $request->query('subscription_type_id', 0);
+
+        $query = DB::table('invoices as i')
+            ->join('orders as o', 'o.id', '=', 'i.order_id')
+            ->select(
+                'i.id',
+                'i.order_id',
+                'i.user_id',
+                'i.order_type',
+                'i.order_start_date',
+                'i.order_end_date',
+                'i.billing_name',
+                'i.invoice_number',
+                'i.invoice_date',
+                'i.status',
+                'i.payment_status',
+                'i.subtotal',
+                'i.delivery_fee',
+                'i.total',
+                'i.grand_total',
+                'i.created_at'
+            )
+            ->where('i.user_id', $user->id);
+
+        if (!empty($start)) {
+            $query->whereDate('i.order_start_date', '>=', $start);
+        }
+
+        if (!empty($end)) {
+            $query->whereDate('i.order_end_date', '<=', $end);
+        }
+
+        if ($subscriptionTypeId > 0) {
+            $query
+                ->join('order_items as oi', 'oi.order_id', '=', 'o.id')
+                ->join('variants as v', 'v.variant_id', '=', 'oi.variant_id')
+                ->join('products as p', 'p.product_id', '=', 'v.product_id')
+                ->join('subscription_sub_types as sst', 'sst.slug', '=', 'p.product_sub_type')
+                ->where('sst.subscription_type_id', $subscriptionTypeId)
+                ->groupBy(
+                    'i.id',
+                    'i.order_id',
+                    'i.user_id',
+                    'i.order_type',
+                    'i.order_start_date',
+                    'i.order_end_date',
+                    'i.billing_name',
+                    'i.invoice_number',
+                    'i.invoice_date',
+                    'i.status',
+                    'i.payment_status',
+                    'i.subtotal',
+                    'i.delivery_fee',
+                    'i.total',
+                    'i.grand_total',
+                    'i.created_at'
+                );
+        }
+
+        $rows = $query
+            ->orderByDesc('i.invoice_date')
+            ->orderByDesc('i.id')
+            ->get();
+
+        return response()->json([
+            'ok' => true,
+            'data' => $rows,
         ]);
     }
 }

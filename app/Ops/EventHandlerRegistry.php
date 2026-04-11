@@ -21,6 +21,11 @@ class EventHandlerRegistry
 
             // shopify
             'sync.shopify.customer_zonecode_push' => \App\Ops\Handlers\ShopifyZonecodePushHandler::class,
+
+            // reports
+            'report.invoice.generate' => \App\Ops\Handlers\MonthlyInvoiceGenerateHandler::class,
+
+            'report.invoice.send_notifications' => \App\Ops\Handlers\MonthlyInvoiceSendHandler::class,
         ];
     }
 

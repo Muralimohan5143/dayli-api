@@ -514,9 +514,15 @@ class MeController extends Controller
         $types = DB::table('user_services as us')
             ->join('subscription_types as st', 'st.id', '=', 'us.subscription_type_id')
             ->where('us.user_id', $user->id)
-            ->where('us.role_name', 'workman')
-            ->where('us.service_handle', 'workman-delivery-boy')
             ->where('us.status', 'approved')
+            ->where(function ($q) {
+                $q->where(function ($qq) {
+                    $qq->where('us.role_name', 'workman')
+                        ->where('us.service_handle', 'workman-delivery-boy');
+                })->orWhere(function ($qq) {
+                    $qq->where('us.role_name', 'vendor');
+                });
+            })
             ->select('st.id', 'st.name', 'st.slug', 'st.img_src')
             ->distinct()
             ->orderBy('st.name')
@@ -907,24 +913,28 @@ class MeController extends Controller
             $order->save();
 
             // ✅ Trigger daily zone reconciliation after delivery save
+            $subscriptionTypeId = (int) ($request->subscription_type_id ?? 0);
+
             DB::table('outbox_events')->updateOrInsert(
                 [
-                    'idempotency_key' => "recon.daily_zone:zone:{$order->zone_id}:date:{$order->delivery_date}",
+                    'idempotency_key' => "zone_daily_reconcile:zone:" . ($order->zone_id ?? 0) . ":date:{$order->delivery_date}:subtype:" . $subscriptionTypeId . ":order:" . ((int)$order->id),
                 ],
                 [
                     'event_type' => 'zone.daily.reconcile',
-                    'aggregate_type' => 'order',
-                    'aggregate_id'   => $order->id,
+                    'aggregate_type' => 'zone',
+                    'aggregate_id'   => (int) ($order->zone_id ?? 0),
                     'scheduled_at'   => now(),
-                    'payload'        => DB::raw(
-                        "JSON_OBJECT(
-                'zone_id', " . ($order->zone_id ?? 'NULL') . ",
-                'delivery_date', '{$order->delivery_date}',
-                'order_id', {$order->id},
-                'delivered_by', " . (Auth::id() ?? 'NULL') . ",
-                'source', 'dayli_app'
-            )"
-                    ),
+                    'payload'        => json_encode([
+                        'zone_id' => (int) ($order->zone_id ?? 0),
+                        'delivery_date' => (string) $order->delivery_date,
+                        'subscription_type_id' => $subscriptionTypeId,
+                        'delivered_only' => true,
+                        'order_id' => (int) $order->id,
+                        'vendor_id' => $order->vendor_id ? (int) $order->vendor_id : null,
+                        'customer_id' => (int) $order->customer_id,
+                        'delivered_by' => Auth::id() ? (int) Auth::id() : null,
+                        'source' => 'dayli_app',
+                    ]),
                     'status'       => 'pending',
                     'attempts'     => 0,
                     'max_attempts' => 10,
@@ -932,7 +942,6 @@ class MeController extends Controller
                     'created_at'   => now(),
                 ]
             );
-
             $day  = Carbon::parse($order->delivery_date)->format('l');
             $date = Carbon::parse($order->delivery_date)->format('d M');
 

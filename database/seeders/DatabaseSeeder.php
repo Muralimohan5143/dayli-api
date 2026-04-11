@@ -22,6 +22,7 @@ class DatabaseSeeder extends Seeder
             SeedSubscriptionTypesAndSubTypes::class,
             SubscriptionZonesSeeder::class,
             ServiceSeeder::class,
+            \App\Console\Commands\SeedVendorMilkSupply::class,
         ]);
 
         // Users

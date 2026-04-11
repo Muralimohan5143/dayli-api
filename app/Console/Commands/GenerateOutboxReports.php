@@ -7,6 +7,7 @@ use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class GenerateOutboxReports extends Command
 {
@@ -174,6 +175,25 @@ class GenerateOutboxReports extends Command
             $report = OutboxReport::updateOrCreate($attributes, $values);
 
             if ($report->wasRecentlyCreated) {
+                DB::table('notifications')->insert([
+                    'user_id'    => (int) $zoneManagerId,
+                    'title'      => 'Milk invoice report ready',
+                    'body'       => 'Monthly milk invoice report is ready for preview and invoice generation.',
+                    'data'       => json_encode([
+                        'report_id' => $report->id,
+                        'month' => $start->format('Y-m'),
+                        'zone_id' => $zoneId,
+                        'subscription_type_id' => $subscriptionTypeId,
+                        'report_type' => 'monthly_invoice',
+                    ]),
+                    'is_read'    => 0,
+                    'type'       => 'monthly_invoice_ready',
+                    'source'     => 'reports:generate-outbox',
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                    'read_at'    => null,
+                ]);
+
                 $created++;
                 $this->info(
                     "Created | month={$start->format('Y-m')} | zm={$zoneManagerId} | zone={$zoneId} | sub_type={$subscriptionTypeId}"

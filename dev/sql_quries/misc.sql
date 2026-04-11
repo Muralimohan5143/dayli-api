@@ -48,3 +48,16 @@ distinct subscription_type_id,users.id,users.zone_id
 inner join users on users.id=model_has_roles.model_id 
 inner join sub_change_requests scr on scr.zone_id=users.zone_id 
 where role_id=4;
+
+
+
+
+// This query retrieves the order ID, delivery date, and the count of order items for each order that meets specific criteria. It filters out orders from customers with IDs 11345 and 11346, focuses on orders with a delivery date of '2026-04-11', and excludes orders with a delivery status of 'pending'. The results are grouped by order ID and delivery date, allowing us to see the number of items associated with each relevant order on that specific date. This information can be useful for analyzing order activity and understanding customer behavior on that day.
+SELECT o.id, o.delivery_date, count(oi.id) FROM dayli.orders o
+left outer join dayli.order_items oi on oi.order_id = o.id
+where o.customer_id not in (11345,  11346) and o.delivery_date = '2026-04-11'
+and o.delivery_status !='pending'
+group by o.id, o.delivery_date; 
+
+
+

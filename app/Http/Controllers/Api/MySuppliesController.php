@@ -362,7 +362,7 @@ class MySuppliesController extends Controller
         $customerMap = $baseRows->keyBy('draft_order_item_id');
 
         $items = DraftOrderItem::query()
-            ->with('product')
+            ->with(['product', 'variant'])
             ->whereIn('id', $ids)
             ->get()
             ->keyBy('id');
@@ -400,7 +400,12 @@ class MySuppliesController extends Controller
                 'delivery_status'     => $o->delivery_status ?? 'pending',
 
                 // product details
-                'product_title'       => optional($item->product)->title ?? 'Product',
+                'product_title' => (
+                    optional($item->variant)->title &&
+                    optional($item->variant)->title !== 'Default Title'
+                )
+                    ? optional($item->variant)->title
+                    : (optional($item->product)->title ?? 'Product'),
                 'image_url'           => optional($item->product)->img_src ?? '',
 
                 'qty' => $oiQty !== null ? $oiQty : (float) $item->qty,
@@ -850,7 +855,7 @@ class MySuppliesController extends Controller
             // 7️⃣ Write outbox event for Daily Zone Reconcile
             OutboxEvent::updateOrCreate(
                 [
-                    'idempotency_key' => "zone_daily_reconcile:zone:" . ($order->zone_id ?? 0) . ":date:{$deliveryDate}:subtype:" . ((int)($scr->subscription_type_id ?? 0)),
+                    'idempotency_key' => "zone_daily_reconcile:zone:" . ($order->zone_id ?? 0) . ":date:{$deliveryDate}:subtype:" . ((int)($scr->subscription_type_id ?? 0)) . ":order:" . ((int)$order->id),
                 ],
                 [
                     'event_type'     => 'zone.daily.reconcile',
@@ -862,6 +867,10 @@ class MySuppliesController extends Controller
                         'delivery_date' => $deliveryDate,
                         'subscription_type_id' => (int) ($scr->subscription_type_id ?? 0),
                         'delivered_only' => true,
+                        'order_id' => (int) $order->id,
+                        'vendor_id' => (int) $vendorId,
+                        'customer_id' => (int) $customerId,
+                        'source' => 'dayli_app',
                     ],
                     'status'        => 'pending',
                     'attempts'      => 0,

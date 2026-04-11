@@ -133,6 +133,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/outbox-reports', [OutboxReportController::class, 'index']);
         Route::get('/outbox-reports/{id}', [OutboxReportController::class, 'show']);
         Route::post('/outbox-reports/{id}/generate', [OutboxReportController::class, 'generate']);
+        Route::post('/zone-manager/outbox-reports/{id}/send', [OutboxReportController::class, 'send']);
+        Route::get('/my-invoices', [OutboxReportController::class, 'myInvoices']);
     });
 
     // --------------------------

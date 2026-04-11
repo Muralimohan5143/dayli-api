@@ -70,8 +70,26 @@ class InvoiceGeneratorService
                 $subtotal += (float) $it->line_total_sum;
             }
 
+            $deliveryDays = DB::table('order_items as oi')
+                ->join('orders as o', 'o.id', '=', 'oi.order_id')
+                ->join('variants as v', 'v.variant_id', '=', 'oi.variant_id')
+                ->join('products as p', 'p.product_id', '=', 'v.product_id')
+                ->join('subscription_sub_types as sst', 'sst.slug', '=', 'p.product_sub_type')
+                ->where('o.customer_id', $uid)
+                ->where('o.zone_id', $zoneId)
+                ->where('sst.subscription_type_id', $subscriptionTypeId)
+                ->whereNotNull('oi.actuals_date')
+                ->where('oi.actuals_date', '>=', $monthStart)
+                ->where('oi.actuals_date', '<', $monthEndExclusive)
+                ->distinct()
+                ->count('oi.actuals_date');
+
+            $deliveryFeePerDay = 2;
+            $deliveryFee = $deliveryDays * $deliveryFeePerDay;
+
             $previousDues = $this->computePreviousDues($uid, $monthStart);
-            $grandTotal = round($subtotal + $previousDues, 2);
+            $total = round($subtotal + $deliveryFee, 2);
+            $grandTotal = round($total + $previousDues, 2);
 
             $u = DB::table('users')
                 ->where('id', $uid)
@@ -104,8 +122,8 @@ class InvoiceGeneratorService
                 'tax' => 0,
                 'tax_total' => 0,
                 'discount' => 0,
-                'delivery_fee' => 0,
-                'total' => round($subtotal, 2),
+                'delivery_fee' => round($deliveryFee, 2),
+                'total' => $total,
                 'grand_total' => $grandTotal,
                 'currency' => 'INR',
                 'number' => $invNumber,

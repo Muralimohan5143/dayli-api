@@ -21,6 +21,7 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\SeedDemoMilkSupplies::class,
         \App\Console\Commands\ImportMergedMilkSheet::class,
         \App\Console\Commands\GenerateOrdersFromAllDraftOrders::class,
+        \App\Console\Commands\SeedVendorMilkSupply::class,
 
     ];
     /**
