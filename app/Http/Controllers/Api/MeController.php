@@ -11,6 +11,7 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use Illuminate\Support\Facades\Auth;
 use App\Jobs\SendPushToUserJob;
+use Illuminate\Support\Facades\Log;
 
 
 class MeController extends Controller
@@ -109,6 +110,58 @@ class MeController extends Controller
             ->whereIn('status', ['today', 'in_progress'])
             ->orderByDesc('id')
             ->first();
+    }
+
+    private function tryCreateAgentDeliveredEvent(int $zoneId, int $subscriptionTypeId, string $deliveryDate): void
+    {
+        $deliveryDate = Carbon::parse($deliveryDate)->toDateString();
+        if ($zoneId <= 0 || $subscriptionTypeId <= 0 || !$deliveryDate) {
+            return;
+        }
+
+        $base = DB::table('orders as o')
+            ->join('draft_orders as d', 'd.id', '=', 'o.draft_order_id')
+            ->join('sub_change_requests as scr', 'scr.id', '=', 'd.change_request_id')
+            ->where('o.zone_id', $zoneId)
+            ->whereDate('o.delivery_date', $deliveryDate)
+            ->whereNotIn('o.status', ['cancelled'])
+            ->where('scr.party_type', 'consumer')
+            ->where('scr.subscription_type_id', $subscriptionTypeId);
+
+        $total = (clone $base)->count();
+
+        $delivered = (clone $base)
+            ->where('o.delivery_status', 'delivered')
+            ->count();
+
+        // ❌ if any pending → stop
+        if ($total <= 0 || $total !== $delivered) {
+            return;
+        }
+
+        // ✅ create ONLY ONE delivery event
+        DB::table('outbox_events')->updateOrInsert(
+            [
+                'idempotency_key' => "agent_delivered_entered:zone:{$zoneId}:date:{$deliveryDate}:subtype:{$subscriptionTypeId}",
+            ],
+            [
+                'event_type'     => 'agent_delivered_entered',
+                'aggregate_type' => 'zone',
+                'aggregate_id'   => $zoneId,
+                'scheduled_at'   => now(),
+                'payload'        => json_encode([
+                    'zone_id' => $zoneId,
+                    'delivery_date' => $deliveryDate,
+                    'subscription_type_id' => $subscriptionTypeId,
+                    'source' => 'dayli_app',
+                ]),
+                'status'        => 'pending',
+                'attempts'      => 0,
+                'max_attempts'  => 10,
+                'updated_at'    => now(),
+                'created_at'    => now(),
+            ]
+        );
     }
     // private function currentDeliveryTaskForUser(int $userId)
     // {
@@ -493,6 +546,13 @@ class MeController extends Controller
         } else {
             $subTypeId = (int) ($task->subscription_type_id ?? 0);
         }
+
+        Log::info('myWorkOrders final debug', [
+            'targetDate' => $targetDate,
+            'customerIds_count' => count($customerIds),
+            'has_11316' => in_array(11316, $customerIds, true),
+            'todayOrder_11316' => $todayOrders->firstWhere('customer_id', 11316),
+        ]);
 
         return response()->json([
             'delivery_task_id' => $task ? (int) $task->id : 0,
@@ -912,36 +972,21 @@ class MeController extends Controller
             $order->delivered_by    = Auth::id();
             $order->save();
 
+
+            $subscriptionTypeId = (int) ($request->subscription_type_id ?? 0);
+
+            $this->tryCreateAgentDeliveredEvent(
+                (int) ($order->zone_id ?? 0),
+                $subscriptionTypeId,
+                \Carbon\Carbon::parse((string) $order->delivery_date)->toDateString()
+            );
+
+
+
             // ✅ Trigger daily zone reconciliation after delivery save
             $subscriptionTypeId = (int) ($request->subscription_type_id ?? 0);
 
-            DB::table('outbox_events')->updateOrInsert(
-                [
-                    'idempotency_key' => "zone_daily_reconcile:zone:" . ($order->zone_id ?? 0) . ":date:{$order->delivery_date}:subtype:" . $subscriptionTypeId . ":order:" . ((int)$order->id),
-                ],
-                [
-                    'event_type' => 'zone.daily.reconcile',
-                    'aggregate_type' => 'zone',
-                    'aggregate_id'   => (int) ($order->zone_id ?? 0),
-                    'scheduled_at'   => now(),
-                    'payload'        => json_encode([
-                        'zone_id' => (int) ($order->zone_id ?? 0),
-                        'delivery_date' => (string) $order->delivery_date,
-                        'subscription_type_id' => $subscriptionTypeId,
-                        'delivered_only' => true,
-                        'order_id' => (int) $order->id,
-                        'vendor_id' => $order->vendor_id ? (int) $order->vendor_id : null,
-                        'customer_id' => (int) $order->customer_id,
-                        'delivered_by' => Auth::id() ? (int) Auth::id() : null,
-                        'source' => 'dayli_app',
-                    ]),
-                    'status'       => 'pending',
-                    'attempts'     => 0,
-                    'max_attempts' => 10,
-                    'updated_at'   => now(),
-                    'created_at'   => now(),
-                ]
-            );
+
             $day  = Carbon::parse($order->delivery_date)->format('l');
             $date = Carbon::parse($order->delivery_date)->format('d M');
 

@@ -13,8 +13,13 @@ class EventHandlerRegistry
     public function __construct()
     {
         $this->map = [
+
+            'reconciliation.matched' => \App\Ops\Handlers\ReconciliationResultNotificationHandler::class,
+            'reconciliation.mismatch' => \App\Ops\Handlers\ReconciliationResultNotificationHandler::class,
             // reconciliation
-            'vendor_supply_entered' => \App\Ops\Handlers\VendorSupplyReconcileHandler::class,
+            'vendor_supply_entered' => \App\Ops\Handlers\DailyZoneReconcileHandler::class,
+            'agent_delivered_entered' => \App\Ops\Handlers\DailyZoneReconcileHandler::class,
+
             'zone.daily.reconcile'  => \App\Ops\Handlers\DailyZoneReconcileHandler::class,
             'recon.daily_zone'      => \App\Ops\Handlers\DailyZoneReconcileHandler::class,
             'daily_zone_reconcile'  => \App\Ops\Handlers\DailyZoneReconcileHandler::class,

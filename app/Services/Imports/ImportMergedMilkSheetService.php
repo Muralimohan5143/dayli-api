@@ -571,31 +571,33 @@ class ImportMergedMilkSheetService
     {
         $map = [];
 
-        // JAN block
-        // Day 1 = CV (99) ... Day 31 = BR (69)
-        for ($day = 1; $day <= 31; $day++) {
-            $colIndex = 100 - $day; // 1->99, 31->69
-            $map[$colIndex] = Carbon::create(2026, 1, $day);
-        }
+        /*
+     * APRIL ONLY IMPORT
+     *
+     * Actual sheet layout in customer section:
+     * J = Day 7
+     * K = Day 6
+     * L = Day 5
+     * M = Day 4
+     * N = Day 3
+     * O = Day 2
+     * P = Day 1
+     *
+     * PhpSpreadsheet toArray() uses zero-based indexes:
+     * J=9, K=10, L=11, M=12, N=13, O=14, P=15
+     *
+     * We must build chronological order:
+     * Apr 1 -> P (15)
+     * Apr 2 -> O (14)
+     * Apr 3 -> N (13)
+     * Apr 4 -> M (12)
+     * Apr 5 -> L (11)
+     * Apr 6 -> K (10)
+     * Apr 7 -> J (9)
+     */
 
-        // FEB block
-        // Day 1 = BQ (68) ... Day 28 = AP (41)
-        for ($day = 1; $day <= 28; $day++) {
-            $colIndex = 69 - $day; // 1->68, 28->41
-            $map[$colIndex] = Carbon::create(2026, 2, $day);
-        }
-
-        // MAR block
-        // Day 1 = AO (40) ... Day 31 = K (10)
-        for ($day = 1; $day <= 31; $day++) {
-            $colIndex = 41 - $day; // 1->40, 31->10
-            $map[$colIndex] = Carbon::create(2026, 3, $day);
-        }
-
-        // APR block
-        // Day 1 = J (9) ... Day 2 = I (8)
-        for ($day = 1; $day <= 2; $day++) {
-            $colIndex = 10 - $day; // 1->9, 2->8
+        for ($day = 1; $day <= 7; $day++) {
+            $colIndex = 16 - $day; // 1->15(P), 2->14(O), ... 7->9(J)
             $map[$colIndex] = Carbon::create(2026, 4, $day);
         }
 
@@ -685,7 +687,12 @@ class ImportMergedMilkSheetService
         }
 
         $user = DB::table('users')
-            ->where('phone', $phone)
+            ->where(function ($q) use ($phone) {
+                $q->where('phone', $phone)
+                    ->orWhere('phone', '+91' . $phone)
+                    ->orWhere('phone', '91' . $phone)
+                    ->orWhere('phone', '0' . $phone);
+            })
             ->first();
 
         if (! $user) {

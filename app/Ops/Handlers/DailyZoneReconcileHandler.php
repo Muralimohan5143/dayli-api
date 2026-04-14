@@ -33,6 +33,37 @@ class DailyZoneReconcileHandler implements EventHandler
     {
         $payload = $event->payload ?? [];
 
+        $eventType = $event->event_type ?? '';
+
+        if (in_array($eventType, ['vendor_supply_entered', 'agent_delivered_entered'])) {
+
+            $zoneId = (int) ($payload['zone_id'] ?? 0);
+            $date   = (string) ($payload['delivery_date'] ?? '');
+            $subTypeId = (int) ($payload['subscription_type_id'] ?? 0);
+
+            if ($zoneId <= 0 || !$date || $subTypeId <= 0) {
+                return ['ok' => false, 'reason' => 'invalid payload'];
+            }
+
+            // check both events exist
+            $vendorExists = DB::table('outbox_events')
+                ->where('event_type', 'vendor_supply_entered')
+                ->where('idempotency_key', "vendor_supply_entered:zone:{$zoneId}:date:{$date}:subtype:{$subTypeId}")
+                ->exists();
+
+            $agentExists = DB::table('outbox_events')
+                ->where('event_type', 'agent_delivered_entered')
+                ->where('idempotency_key', "agent_delivered_entered:zone:{$zoneId}:date:{$date}:subtype:{$subTypeId}")
+                ->exists();
+
+            // ❌ if both not ready → stop
+            if (!$vendorExists || !$agentExists) {
+                return ['ok' => true, 'skipped' => true, 'reason' => 'waiting for both sides'];
+            }
+
+            // ✅ both ready → continue to reconciliation
+        }
+
         $zoneId = (int) ($payload['zone_id'] ?? 0);
         if ($zoneId <= 0) {
             throw new \RuntimeException('Invalid payload: zone_id required');
@@ -90,7 +121,7 @@ class DailyZoneReconcileHandler implements EventHandler
                 continue;
             }
 
-            $key = $productId . '|' . $variantId;
+            $key = (string)$variantId;
             $qty = (float) ($r->qty ?? 0);
 
             $supplied[$key] = $qty;
@@ -142,7 +173,7 @@ class DailyZoneReconcileHandler implements EventHandler
                 continue;
             }
 
-            $key = $productId . '|' . $variantId;
+            $key = (string) $variantId;
             $qty = (float) ($r->qty ?? 0);
 
             $delivered[$key] = $qty;
@@ -169,9 +200,8 @@ class DailyZoneReconcileHandler implements EventHandler
 
             $diff[$key] = $d;
 
-            [$productId, $variantId] = array_pad(explode('|', (string) $key, 2), 2, 0);
-            $productId = (int) $productId;
-            $variantId = (int) $variantId;
+            $productId = 0;
+            $variantId = (int) $key;
 
             if (abs($d) > 0.000001) {
                 $mismatches[] = [
@@ -186,6 +216,58 @@ class DailyZoneReconcileHandler implements EventHandler
         }
 
         $status = count($mismatches) ? 'mismatch' : 'matched';
+
+        // 1) Save reconciliation report
+        DB::table('reconciliation_reports')->updateOrInsert(
+            [
+                'zone_id' => $zoneId,
+                'delivery_date' => $targetDate,
+                'subscription_type_id' => $subTypeId,
+            ],
+            [
+                'status' => $status,
+                'summary_json' => json_encode([
+                    'supplied_total' => $suppliedTotal,
+                    'delivered_total' => $deliveredTotal,
+                    'diff_total' => $suppliedTotal - $deliveredTotal,
+                ]),
+                'mismatches_json' => json_encode($mismatches),
+                'updated_at' => now(),
+                'created_at' => now(),
+            ]
+        );
+
+        // 2) Create result outbox event
+        $resultEventType = $status === 'matched'
+            ? 'reconciliation.matched'
+            : 'reconciliation.mismatch';
+
+        DB::table('outbox_events')->updateOrInsert(
+            [
+                'idempotency_key' => "recon_result:zone:{$zoneId}:date:{$targetDate}:subtype:{$subTypeId}",
+            ],
+            [
+                'event_type' => $resultEventType,
+                'aggregate_type' => 'zone',
+                'aggregate_id' => $zoneId,
+                'scheduled_at' => now(),
+                'payload' => json_encode([
+                    'zone_id' => $zoneId,
+                    'delivery_date' => $targetDate,
+                    'subscription_type_id' => $subTypeId,
+                    'status' => $status,
+                    'mismatches' => $mismatches,
+                    'source' => 'dayli_app',
+                ]),
+                'status' => 'pending',
+                'attempts' => 0,
+                'max_attempts' => 10,
+                'updated_at' => now(),
+                'created_at' => now(),
+            ]
+        );
+
+
 
         $supplierOrdersCount = (int) DB::table('orders as o')
             ->join('draft_orders as d', 'd.id', '=', 'o.draft_order_id')

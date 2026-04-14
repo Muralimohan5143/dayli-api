@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use App\Jobs\SendPushToUserJob;
-use App\Models\OutboxEvent;
+
 
 class MySuppliesController extends Controller
 {
@@ -50,6 +50,56 @@ class MySuppliesController extends Controller
         return (int) ($u?->id ?? 0);
     }
 
+    private function tryCreateVendorSupplyEvent(int $zoneId, int $subscriptionTypeId, string $deliveryDate): void
+    {
+        if ($zoneId <= 0 || $subscriptionTypeId <= 0 || !$deliveryDate) {
+            return;
+        }
+
+        $base = DB::table('orders as o')
+            ->join('draft_orders as d', 'd.id', '=', 'o.draft_order_id')
+            ->join('sub_change_requests as scr', 'scr.id', '=', 'd.change_request_id')
+            ->where('o.zone_id', $zoneId)
+            ->whereDate('o.delivery_date', $deliveryDate)
+            ->whereNotIn('o.status', ['cancelled'])
+            ->where('scr.party_type', 'supplier')
+            ->where('scr.subscription_type_id', $subscriptionTypeId);
+
+        $total = (clone $base)->count();
+
+        $delivered = (clone $base)
+            ->where('o.delivery_status', 'delivered')
+            ->count();
+
+        // ❌ if any pending → stop
+        if ($total <= 0 || $total !== $delivered) {
+            return;
+        }
+
+        // ✅ create ONLY ONE vendor event
+        DB::table('outbox_events')->updateOrInsert(
+            [
+                'idempotency_key' => "vendor_supply_entered:zone:{$zoneId}:date:{$deliveryDate}:subtype:{$subscriptionTypeId}",
+            ],
+            [
+                'event_type'     => 'vendor_supply_entered',
+                'aggregate_type' => 'zone',
+                'aggregate_id'   => $zoneId,
+                'scheduled_at'   => now(),
+                'payload'        => json_encode([
+                    'zone_id' => $zoneId,
+                    'delivery_date' => $deliveryDate,
+                    'subscription_type_id' => $subscriptionTypeId,
+                    'source' => 'dayli_app',
+                ]),
+                'status'        => 'pending',
+                'attempts'      => 0,
+                'max_attempts'  => 10,
+                'updated_at'    => now(),
+                'created_at'    => now(),
+            ]
+        );
+    }
     /**
      * Base supplier-side join: scr -> draft_orders -> orders
      * IMPORTANT: supplier filter is here.
@@ -157,6 +207,49 @@ class MySuppliesController extends Controller
         // ---------------------------------------------------------
         // 1) Base rows (supplier side subscriptions -> customer list)
         // ---------------------------------------------------------
+
+        if ($mode === 'dates') {
+
+            $pendingDates = DB::table('orders as o')
+                ->join('draft_orders as d', 'd.id', '=', 'o.draft_order_id')
+                ->join('sub_change_requests as scr', 'scr.id', '=', 'd.change_request_id')
+                ->where('o.vendor_id', $vendorId)
+                ->whereNotNull('o.delivery_date')
+                ->where('o.delivery_status', 'pending')
+                ->where('scr.party_type', 'supplier')
+                ->where('scr.by_user_id', $vendorId)
+                ->where('scr.subscription_type_id', $subTypeId)
+                ->selectRaw("DATE(o.delivery_date) as d")
+                ->groupBy('d')
+                ->orderByDesc('d')
+                ->pluck('d')
+                ->map(fn($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
+                ->values();
+
+            $doneDates = DB::table('orders as o')
+                ->join('draft_orders as d', 'd.id', '=', 'o.draft_order_id')
+                ->join('sub_change_requests as scr', 'scr.id', '=', 'd.change_request_id')
+                ->where('o.vendor_id', $vendorId)
+                ->whereNotNull('o.delivery_date')
+                ->where('o.delivery_status', 'delivered')
+                ->where('scr.party_type', 'supplier')
+                ->where('scr.by_user_id', $vendorId)
+                ->where('scr.subscription_type_id', $subTypeId)
+                ->selectRaw("DATE(o.delivery_date) as d")
+                ->groupBy('d')
+                ->orderByDesc('d')
+                ->pluck('d')
+                ->map(fn($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
+                ->values();
+
+            return response()->json([
+                'subscription_type_id' => (int) $subTypeId,
+                'vendor_id'            => (int) $vendorId,
+                'pending_dates'        => $pendingDates,
+                'done_dates'           => $doneDates,
+            ]);
+        }
+
         $baseRows = DB::table('draft_order_items as doi')
             ->join('draft_orders as do', 'do.id', '=', 'doi.draft_order_id')
             ->join('sub_change_requests as scr', 'scr.id', '=', 'do.change_request_id')
@@ -260,40 +353,47 @@ class MySuppliesController extends Controller
         // ---------------------------------------------------------
         // 3) mode=dates (pending/done date options for modal)
         // ---------------------------------------------------------
-        if ($mode === 'dates') {
+        // if ($mode === 'dates') {
 
-            $pendingDates = DB::table('orders')
-                ->where('vendor_id', $vendorId)
-                ->whereIn('draft_order_id', $draftOrderIds)
-                ->whereNotNull('delivery_date')
-                ->where('delivery_status', 'pending')
-                ->whereDate('delivery_date', '<=', $today)
-                ->selectRaw("DATE(delivery_date) as d")
-                ->groupBy('d')
-                ->orderByDesc('d')
-                ->pluck('d')
-                ->map(fn($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
-                ->values();
+        //     $pendingDates = DB::table('orders as o')
+        //         ->join('draft_orders as d', 'd.id', '=', 'o.draft_order_id')
+        //         ->join('sub_change_requests as scr', 'scr.id', '=', 'd.change_request_id')
+        //         ->where('o.vendor_id', $vendorId)
+        //         ->whereNotNull('o.delivery_date')
+        //         ->where('o.delivery_status', 'pending')
+        //         ->where('scr.party_type', 'supplier')
+        //         ->where('scr.by_user_id', $vendorId)
+        //         ->where('scr.subscription_type_id', $subTypeId)
+        //         ->selectRaw("DATE(o.delivery_date) as d")
+        //         ->groupBy('d')
+        //         ->orderByDesc('d')
+        //         ->pluck('d')
+        //         ->map(fn($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
+        //         ->values();
 
-            $doneDates = DB::table('orders')
-                ->where('vendor_id', $vendorId)
-                ->whereIn('draft_order_id', $draftOrderIds)
-                ->whereNotNull('delivery_date')
-                ->where('delivery_status', 'delivered')
-                ->selectRaw("DATE(delivery_date) as d")
-                ->groupBy('d')
-                ->orderByDesc('d')
-                ->pluck('d')
-                ->map(fn($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
-                ->values();
+        //     $doneDates = DB::table('orders as o')
+        //         ->join('draft_orders as d', 'd.id', '=', 'o.draft_order_id')
+        //         ->join('sub_change_requests as scr', 'scr.id', '=', 'd.change_request_id')
+        //         ->where('o.vendor_id', $vendorId)
+        //         ->whereNotNull('o.delivery_date')
+        //         ->where('o.delivery_status', 'delivered')
+        //         ->where('scr.party_type', 'supplier')
+        //         ->where('scr.by_user_id', $vendorId)
+        //         ->where('scr.subscription_type_id', $subTypeId)
+        //         ->selectRaw("DATE(o.delivery_date) as d")
+        //         ->groupBy('d')
+        //         ->orderByDesc('d')
+        //         ->pluck('d')
+        //         ->map(fn($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
+        //         ->values();
 
-            return response()->json([
-                'subscription_type_id' => (int) $subTypeId,
-                'vendor_id'            => (int) $vendorId,
-                'pending_dates'        => $pendingDates,
-                'done_dates'           => $doneDates,
-            ]);
-        }
+        //     return response()->json([
+        //         'subscription_type_id' => (int) $subTypeId,
+        //         'vendor_id'            => (int) $vendorId,
+        //         'pending_dates'        => $pendingDates,
+        //         'done_dates'           => $doneDates,
+        //     ]);
+        // }
 
         // ---------------------------------------------------------
         // 4) Load today's/dates orders status map (by draft_order_id)
@@ -825,58 +925,12 @@ class MySuppliesController extends Controller
             $order->delivered_by    = Auth::id();
             $order->save();
 
-            // 6️⃣ Write outbox event (vendor_supply_entered)
-            DB::table('outbox_events')->updateOrInsert(
-                [
-                    'idempotency_key' => "vendor_supply_entered:order:{$order->id}",
-                ],
-                [
-                    'event_type'     => 'vendor_supply_entered',
-                    'aggregate_type' => 'order',
-                    'aggregate_id'   => $order->id,
-                    'scheduled_at'   => now(),
-                    'payload'        => DB::raw(
-                        "JSON_OBJECT(
-                'vendor_id', {$vendorId},
-                'order_id', {$order->id},
-                'delivery_date', '{$deliveryDate}',
-                'zone_id', " . ($order->zone_id ?? 'NULL') . ",
-                'source', 'dayli_app'
-            )"
-                    ),
-                    'status'        => 'pending',
-                    'attempts'      => 0,
-                    'max_attempts'  => 10,
-                    'updated_at'    => now(),
-                    'created_at'    => now(),
-                ]
+            $this->tryCreateVendorSupplyEvent(
+                (int) ($order->zone_id ?? 0),
+                (int) ($scr->subscription_type_id ?? 0),
+                (string) $deliveryDate
             );
 
-            // 7️⃣ Write outbox event for Daily Zone Reconcile
-            OutboxEvent::updateOrCreate(
-                [
-                    'idempotency_key' => "zone_daily_reconcile:zone:" . ($order->zone_id ?? 0) . ":date:{$deliveryDate}:subtype:" . ((int)($scr->subscription_type_id ?? 0)) . ":order:" . ((int)$order->id),
-                ],
-                [
-                    'event_type'     => 'zone.daily.reconcile',
-                    'aggregate_type' => 'zone',
-                    'aggregate_id'   => (int) ($order->zone_id ?? 0),
-                    'scheduled_at'   => now(),
-                    'payload'        => [
-                        'zone_id' => (int) ($order->zone_id ?? 0),
-                        'delivery_date' => $deliveryDate,
-                        'subscription_type_id' => (int) ($scr->subscription_type_id ?? 0),
-                        'delivered_only' => true,
-                        'order_id' => (int) $order->id,
-                        'vendor_id' => (int) $vendorId,
-                        'customer_id' => (int) $customerId,
-                        'source' => 'dayli_app',
-                    ],
-                    'status'        => 'pending',
-                    'attempts'      => 0,
-                    'max_attempts'  => 10,
-                ]
-            );
 
 
             // send push notification
