@@ -185,37 +185,118 @@ class DailyZoneReconcileHandler implements EventHandler
             }
         }
 
+
         // ----------------------------------------
-        // DIFF = supplied - delivered
+        // APPROVED EXCEPTIONS
         // ----------------------------------------
-        $keys = array_values(array_unique(array_merge(array_keys($supplied), array_keys($delivered))));
+        $exceptionInRows = DB::table('procurement_delivery_exceptions')
+            ->where('zone_id', $zoneId)
+            ->whereDate('delivery_date', $targetDate)
+            ->where('subscription_type_id', $subTypeId)
+            ->where('status', 'approved')
+            ->where('direction', 'in')
+            ->select(
+                'variant_id',
+                DB::raw('SUM(qty) as qty')
+            )
+            ->groupBy('variant_id')
+            ->get();
+
+        $exceptionOutRows = DB::table('procurement_delivery_exceptions')
+            ->where('zone_id', $zoneId)
+            ->whereDate('delivery_date', $targetDate)
+            ->where('subscription_type_id', $subTypeId)
+            ->where('status', 'approved')
+            ->where('direction', 'out')
+            ->select(
+                'variant_id',
+                DB::raw('SUM(qty) as qty')
+            )
+            ->groupBy('variant_id')
+            ->get();
+
+        $exceptionIn = [];
+        $exceptionOut = [];
+        $exceptionInTotal = 0.0;
+        $exceptionOutTotal = 0.0;
+
+        foreach ($exceptionInRows as $r) {
+            $key = (string) ((int) ($r->variant_id ?? 0));
+            if ($key === '0') {
+                continue;
+            }
+
+            $qty = (float) ($r->qty ?? 0);
+            $exceptionIn[$key] = $qty;
+            $exceptionInTotal += $qty;
+        }
+
+        foreach ($exceptionOutRows as $r) {
+            $key = (string) ((int) ($r->variant_id ?? 0));
+            if ($key === '0') {
+                continue;
+            }
+
+            $qty = (float) ($r->qty ?? 0);
+            $exceptionOut[$key] = $qty;
+            $exceptionOutTotal += $qty;
+        }
+
+        // ----------------------------------------
+        // FINAL DIFF = (supplied + exception_in - exception_out) - delivered
+        // ----------------------------------------
+        $keys = array_values(array_unique(array_merge(
+            array_keys($supplied),
+            array_keys($delivered),
+            array_keys($exceptionIn),
+            array_keys($exceptionOut)
+        )));
 
         $diff = [];
+        $rawDiff = [];
         $mismatches = [];
+        $matchedRows = [];
 
         foreach ($keys as $key) {
-            $in = (float) ($supplied[$key] ?? 0);
-            $out = (float) ($delivered[$key] ?? 0);
-            $d = $in - $out;
+            $suppliedQty = (float) ($supplied[$key] ?? 0);
+            $deliveredQty = (float) ($delivered[$key] ?? 0);
+            $exceptionInQty = (float) ($exceptionIn[$key] ?? 0);
+            $exceptionOutQty = (float) ($exceptionOut[$key] ?? 0);
 
-            $diff[$key] = $d;
+            $adjustedSuppliedQty = $suppliedQty + $exceptionInQty - $exceptionOutQty;
 
-            $productId = 0;
+            $raw = $suppliedQty - $deliveredQty;
+            $final = $adjustedSuppliedQty - $deliveredQty;
+
+            $rawDiff[$key] = $raw;
+            $diff[$key] = $final;
+
             $variantId = (int) $key;
 
-            if (abs($d) > 0.000001) {
-                $mismatches[] = [
-                    'product_id' => $productId,
-                    'variant_id' => $variantId,
-                    'title' => (string) ($titles[$key] ?? ''),
-                    'supplied_qty' => $in,
-                    'delivered_qty' => $out,
-                    'diff_qty' => $d,
-                ];
+            $row = [
+                'product_id' => 0,
+                'variant_id' => $variantId,
+                'title' => (string) ($titles[$key] ?? ''),
+                'supplied_qty' => $suppliedQty,
+                'delivered_qty' => $deliveredQty,
+                'exception_in_qty' => $exceptionInQty,
+                'exception_out_qty' => $exceptionOutQty,
+                'adjusted_supplied_qty' => $adjustedSuppliedQty,
+                'raw_diff_qty' => $raw,
+                'diff_qty' => $final,
+                'final_status' => abs($final) > 0.000001 ? 'mismatch' : 'matched',
+            ];
+
+            if (abs($final) > 0.000001) {
+                $mismatches[] = $row;
+            } else {
+                $matchedRows[] = $row;
             }
         }
 
         $status = count($mismatches) ? 'mismatch' : 'matched';
+
+        $allRows = array_merge($matchedRows, $mismatches);
 
         // 1) Save reconciliation report
         DB::table('reconciliation_reports')->updateOrInsert(
@@ -229,9 +310,15 @@ class DailyZoneReconcileHandler implements EventHandler
                 'summary_json' => json_encode([
                     'supplied_total' => $suppliedTotal,
                     'delivered_total' => $deliveredTotal,
-                    'diff_total' => $suppliedTotal - $deliveredTotal,
+                    'exception_in_total' => $exceptionInTotal,
+                    'exception_out_total' => $exceptionOutTotal,
+                    'adjusted_supplied_total' => $suppliedTotal + $exceptionInTotal - $exceptionOutTotal,
+                    'raw_diff_total' => $suppliedTotal - $deliveredTotal,
+                    'diff_total' => ($suppliedTotal + $exceptionInTotal - $exceptionOutTotal) - $deliveredTotal,
+                    'matched_count' => count($matchedRows),
+                    'mismatch_count' => count($mismatches),
                 ]),
-                'mismatches_json' => json_encode($mismatches),
+                'mismatches_json' => json_encode($allRows),
                 'updated_at' => now(),
                 'created_at' => now(),
             ]
@@ -323,13 +410,18 @@ class DailyZoneReconcileHandler implements EventHandler
             'totals' => [
                 'supplied_qty' => $suppliedTotal,
                 'delivered_qty' => $deliveredTotal,
-                'diff_qty' => $suppliedTotal - $deliveredTotal,
+                'exception_in_qty' => $exceptionInTotal,
+                'exception_out_qty' => $exceptionOutTotal,
+                'adjusted_supplied_qty' => $suppliedTotal + $exceptionInTotal - $exceptionOutTotal,
+                'raw_diff_qty' => $suppliedTotal - $deliveredTotal,
+                'diff_qty' => ($suppliedTotal + $exceptionInTotal - $exceptionOutTotal) - $deliveredTotal,
             ],
-
             'supplied' => $supplied,
             'delivered' => $delivered,
             'diff' => $diff,
             'mismatches' => $mismatches,
+            'raw_diff' => $rawDiff,
+            'matched_rows' => $matchedRows,
         ];
     }
 }

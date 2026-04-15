@@ -137,6 +137,18 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/my-invoices', [OutboxReportController::class, 'myInvoices']);
     });
 
+    // ==============================
+    // Reconciliation Reports
+    // ==============================
+    Route::middleware(['auth:sanctum'])->prefix('reconcile-reports')->group(function () {
+
+        Route::get('/', [\App\Http\Controllers\Api\ReconcileReportController::class, 'index']);
+        Route::get('/{id}', [\App\Http\Controllers\Api\ReconcileReportController::class, 'show']);
+
+        // save exception from UI
+        Route::post('/exception', [\App\Http\Controllers\Api\ReconcileReportController::class, 'storeException']);
+    });
+
     // --------------------------
     // My Work (Delivery Boy)
     // --------------------------
