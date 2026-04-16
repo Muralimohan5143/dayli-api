@@ -294,7 +294,14 @@ class DailyZoneReconcileHandler implements EventHandler
             }
         }
 
-        $status = count($mismatches) ? 'mismatch' : 'matched';
+        if (count($mismatches) > 0) {
+            $status = 'mismatch';
+        } else {
+            // check if any exception used
+            $hasApprovedExceptions = ($exceptionInTotal > 0 || $exceptionOutTotal > 0);
+
+            $status = $hasApprovedExceptions ? 'reconciled' : 'matched';
+        }
 
         $allRows = array_merge($matchedRows, $mismatches);
 
