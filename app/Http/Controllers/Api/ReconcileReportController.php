@@ -172,4 +172,53 @@ class ReconcileReportController extends Controller
             'reconcile_result' => $result,
         ]);
     }
+    public function exceptionReports(Request $request)
+    {
+        $zoneId = $request->user()->zone_id;
+        $type = $request->query('type', 'loss'); // loss | purchase | new_customer
+        $from = $request->query('from');
+        $to = $request->query('to');
+
+        $query = DB::table('procurement_delivery_exceptions as pde')
+            ->leftJoin('variants as v', 'v.variant_id', '=', 'pde.variant_id')
+            ->select(
+                'pde.variant_id',
+                DB::raw("COALESCE(v.title, CONCAT('Variant ', pde.variant_id)) as variant_title"),
+                DB::raw('SUM(pde.qty) as total_qty')
+            )
+            ->where('pde.zone_id', $zoneId)
+            ->whereIn('pde.status', ['pending', 'approved']);
+
+        if (!empty($from)) {
+            $query->whereDate('pde.delivery_date', '>=', $from);
+        }
+
+        if (!empty($to)) {
+            $query->whereDate('pde.delivery_date', '<=', $to);
+        }
+
+        if ($type === 'purchase') {
+            $query->where('pde.exception_type', 'procurement')
+                ->where('pde.direction', 'in');
+        } elseif ($type === 'new_customer') {
+            $query->where('pde.exception_type', 'adhoc')
+                ->where('pde.direction', 'out');
+        } else {
+            $query->where('pde.exception_type', 'loss')
+                ->where('pde.direction', 'out');
+        }
+
+        $rows = $query
+            ->groupBy('pde.variant_id', 'v.title')
+            ->orderByDesc('total_qty')
+            ->orderBy('variant_title')
+            ->get();
+
+        return response()->json([
+            'type' => $type,
+            'from' => $from,
+            'to' => $to,
+            'data' => $rows,
+        ]);
+    }
 }

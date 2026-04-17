@@ -139,14 +139,15 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ==============================
     // Reconciliation Reports
-    // ==============================
     Route::middleware(['auth:sanctum'])->prefix('reconcile-reports')->group(function () {
 
         Route::get('/', [\App\Http\Controllers\Api\ReconcileReportController::class, 'index']);
-        Route::get('/{id}', [\App\Http\Controllers\Api\ReconcileReportController::class, 'show']);
 
         // save exception from UI
         Route::post('/exception', [\App\Http\Controllers\Api\ReconcileReportController::class, 'storeException']);
+        Route::get('/exceptions', [\App\Http\Controllers\Api\ReconcileReportController::class, 'exceptionReports']);
+
+        Route::get('/{id}', [\App\Http\Controllers\Api\ReconcileReportController::class, 'show']);
     });
 
     // --------------------------
