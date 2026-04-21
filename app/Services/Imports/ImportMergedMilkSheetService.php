@@ -572,32 +572,32 @@ class ImportMergedMilkSheetService
         $map = [];
 
         /*
-     * APRIL ONLY IMPORT
+     * APRIL 1 → 20 IMPORT (HARDCODED)
      *
-     * Actual sheet layout in customer section:
-     * J = Day 7
-     * K = Day 6
-     * L = Day 5
-     * M = Day 4
-     * N = Day 3
-     * O = Day 2
-     * P = Day 1
-     *
-     * PhpSpreadsheet toArray() uses zero-based indexes:
-     * J=9, K=10, L=11, M=12, N=13, O=14, P=15
-     *
-     * We must build chronological order:
-     * Apr 1 -> P (15)
-     * Apr 2 -> O (14)
-     * Apr 3 -> N (13)
-     * Apr 4 -> M (12)
-     * Apr 5 -> L (11)
-     * Apr 6 -> K (10)
-     * Apr 7 -> J (9)
+     * AC = Day 1  (28)
+     * AB = Day 2  (27)
+     * AA = Day 3  (26)
+     * Z  = Day 4  (25)
+     * Y  = Day 5  (24)
+     * X  = Day 6  (23)
+     * W  = Day 7  (22)
+     * V  = Day 8  (21)
+     * U  = Day 9  (20)
+     * T  = Day 10 (19)
+     * S  = Day 11 (18)
+     * R  = Day 12 (17)
+     * Q  = Day 13 (16)
+     * P  = Day 14 (15)
+     * O  = Day 15 (14)
+     * N  = Day 16 (13)
+     * M  = Day 17 (12)
+     * L  = Day 18 (11)
+     * K  = Day 19 (10)
+     * J  = Day 20 (9)
      */
 
-        for ($day = 1; $day <= 7; $day++) {
-            $colIndex = 16 - $day; // 1->15(P), 2->14(O), ... 7->9(J)
+        for ($day = 1; $day <= 20; $day++) {
+            $colIndex = 29 - $day; // 1->28(AC), 2->27(AB), ... 20->9(J)
             $map[$colIndex] = Carbon::create(2026, 4, $day);
         }
 

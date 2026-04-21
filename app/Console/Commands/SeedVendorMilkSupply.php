@@ -14,7 +14,7 @@ class SeedVendorMilkSupply extends Command
     protected $signature = 'dayli:seed-vendor-milk-supply
                         {--dry-run : Show what would be inserted/updated without saving}
                         {--from=2026-04-01 : Start date}
-                        {--to=2026-04-07 : End date}
+                       {--to=2026-04-20 : End date}
                         {--log-file= : Custom log file path inside storage/logs}';
 
     protected $description = 'Seed vendor milk supply data for Vishnu and Bhaskar into roles, user_services, SCR, draft_orders, and DOI';
@@ -97,6 +97,72 @@ class SeedVendorMilkSupply extends Command
                         ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 1.00, 'price' => 40.00],
                         ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
                     ],
+
+                    '2026-04-08' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 0.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-09' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 1.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-10' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 0.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-11' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 1.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-12' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 0.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-13' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 1.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-14' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 0.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-15' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 1.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-16' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 0.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-17' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 1.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-18' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 0.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-19' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 1.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
+                    '2026-04-20' => [
+                        ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 4.00, 'price' => 40.00],
+                        ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 1.00, 'price' => 40.00],
+                        ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
+                    ],
                 ],
             ],
             [
@@ -147,6 +213,85 @@ class SeedVendorMilkSupply extends Command
                         ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
                         ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 1.00, 'price' => 35.00],
                     ],
+
+                    '2026-04-08' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 36.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 9.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 1.00, 'price' => 35.00],
+                    ],
+                    '2026-04-09' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 34.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 8.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 1.00, 'price' => 35.00],
+                    ],
+                    '2026-04-10' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 35.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 9.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 1.00, 'price' => 35.00],
+                    ],
+                    '2026-04-11' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 35.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 8.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 3.00, 'price' => 35.00],
+                    ],
+                    '2026-04-12' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 37.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 9.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 2.00, 'price' => 35.00],
+                    ],
+                    '2026-04-13' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 33.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 7.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 1.00, 'price' => 35.00],
+                    ],
+                    '2026-04-14' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 39.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 8.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 2.00, 'price' => 35.00],
+                    ],
+                    '2026-04-15' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 33.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 9.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 2.00, 'price' => 35.00],
+                    ],
+                    '2026-04-16' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 36.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 8.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 2.00, 'price' => 35.00],
+                    ],
+                    '2026-04-17' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 35.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 8.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 2.00, 'price' => 35.00],
+                    ],
+                    '2026-04-18' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 37.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 8.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 2.00, 'price' => 35.00],
+                    ],
+                    '2026-04-19' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 34.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 8.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 1.00, 'price' => 35.00],
+                    ],
+                    '2026-04-20' => [
+                        ['product_id' => 8383403720978, 'variant_id' => 52149488976146, 'label' => 'Vijaya Gold Milk(500 ml)', 'qty' => 34.00, 'price' => 37.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 45623554146578, 'label' => 'Vijaya Toned Milk(500ml)', 'qty' => 8.00, 'price' => 30.00],
+                        ['product_id' => 8425366782226, 'variant_id' => 52148028047634, 'label' => 'Vijaya Toned Milk Small', 'qty' => 1.00, 'price' => 10.00],
+                        ['product_id' => 8421025218834, 'variant_id' => 45608528314642, 'label' => 'Vijaya Curd(500 ml)', 'qty' => 1.00, 'price' => 35.00],
+                    ],
                 ],
             ],
         ];
@@ -182,20 +327,11 @@ class SeedVendorMilkSupply extends Command
 
                 $this->linkScrToDraftOrder($scrId, $draftOrderId);
 
-                foreach ($vendor['daily_items'] as $supplyDate => $items) {
-                    foreach ($items as $item) {
-                        $this->seedDoiForDate(
-                            draftOrderId: $draftOrderId,
-                            vendorId: $vendor['user_id'],
-                            productId: $item['product_id'],
-                            variantId: $item['variant_id'],
-                            qty: $item['qty'],
-                            price: $item['price'],
-                            label: $item['label'],
-                            supplyDate: $supplyDate
-                        );
-                    }
-                }
+                $this->seedMergedDoiRanges(
+                    draftOrderId: $draftOrderId,
+                    vendorId: $vendor['user_id'],
+                    dailyItems: $vendor['daily_items']
+                );
 
                 if ($this->dryRun) {
                     DB::rollBack();
@@ -557,7 +693,7 @@ class SeedVendorMilkSupply extends Command
         }
     }
 
-    private function seedDoiForDate(
+    private function seedDoiRange(
         int $draftOrderId,
         int $vendorId,
         int $productId,
@@ -565,13 +701,22 @@ class SeedVendorMilkSupply extends Command
         float $qty,
         float $price,
         string $label,
-        string $supplyDate
+        string $startDate,
+        ?string $endDate,
+        string $status
     ): void {
         $existing = DB::table('draft_order_items')
             ->where('draft_order_id', $draftOrderId)
             ->where('variant_id', $variantId)
             ->where('vendor_id', $vendorId)
-            ->where('start_date', $supplyDate)
+            ->whereDate('start_date', $startDate)
+            ->where(function ($q) use ($endDate) {
+                if ($endDate === null) {
+                    $q->whereNull('end_date');
+                } else {
+                    $q->whereDate('end_date', $endDate);
+                }
+            })
             ->first();
 
         $payload = [
@@ -581,13 +726,13 @@ class SeedVendorMilkSupply extends Command
             'product_id' => $productId,
             'variant_id' => $variantId,
             'vendor_id' => $vendorId,
-            'frequency_type' => $qty > 0 ? 'daily' : null,
+            'frequency_type' => $status === 'active' ? 'daily' : null,
             'qty' => $qty,
             'unit' => 'pcs',
             'price_snapshot' => $price,
-            'start_date' => $supplyDate,
-            'end_date' => $supplyDate,
-            'status' => $qty > 0 ? 'active' : 'paused',
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'status' => $status,
             'supersedes_doi_id' => null,
             'created_from_action' => 'vendor_seed',
             'closed_by_action' => null,
@@ -599,29 +744,117 @@ class SeedVendorMilkSupply extends Command
             'updated_at' => now(),
         ];
 
-        $this->log('doi payload full', $payload);
-
         if ($existing) {
-            $this->line("  DOI update: date={$supplyDate}, variant_id={$variantId}, qty={$qty}");
-            $this->log('doi update full', [
-                'id' => $existing->id,
-                ...$payload,
-            ]);
-
             if (! $this->dryRun) {
                 DB::table('draft_order_items')->where('id', $existing->id)->update($payload);
             }
             return;
         }
 
-        $this->line("  DOI insert: date={$supplyDate}, variant_id={$variantId}, qty={$qty}");
-        $this->log('doi insert full', $payload);
-
         if (! $this->dryRun) {
             DB::table('draft_order_items')->insert([
                 ...$payload,
                 'created_at' => now(),
             ]);
+        }
+    }
+
+    private function seedMergedDoiRanges(
+        int $draftOrderId,
+        int $vendorId,
+        array $dailyItems
+    ): void {
+        $byVariant = [];
+
+        foreach ($dailyItems as $date => $items) {
+            foreach ($items as $item) {
+                $variantKey = (string) $item['variant_id'];
+
+                $byVariant[$variantKey][] = [
+                    'date' => $date,
+                    'product_id' => (int) $item['product_id'],
+                    'variant_id' => (int) $item['variant_id'],
+                    'qty' => (float) $item['qty'],
+                    'price' => (float) $item['price'],
+                    'label' => (string) $item['label'],
+                    'status' => ((float) $item['qty'] > 0) ? 'active' : 'paused',
+                ];
+            }
+        }
+
+        foreach ($byVariant as $variantRows) {
+            usort($variantRows, fn($a, $b) => strcmp($a['date'], $b['date']));
+
+            $current = null;
+
+            foreach ($variantRows as $row) {
+                if ($current === null) {
+                    $current = [
+                        'start_date' => $row['date'],
+                        'end_date' => $row['date'],
+                        'product_id' => $row['product_id'],
+                        'variant_id' => $row['variant_id'],
+                        'qty' => $row['qty'],
+                        'price' => $row['price'],
+                        'label' => $row['label'],
+                        'status' => $row['status'],
+                    ];
+                    continue;
+                }
+
+                $prevEnd = \Carbon\Carbon::parse($current['end_date']);
+                $thisDate = \Carbon\Carbon::parse($row['date']);
+
+                $isContinuous = $prevEnd->copy()->addDay()->toDateString() === $thisDate->toDateString();
+                $sameQty = (float) $current['qty'] === (float) $row['qty'];
+                $samePrice = (float) $current['price'] === (float) $row['price'];
+                $sameStatus = $current['status'] === $row['status'];
+
+                if ($isContinuous && $sameQty && $samePrice && $sameStatus) {
+                    $current['end_date'] = $row['date'];
+                } else {
+                    $this->seedDoiRange(
+                        draftOrderId: $draftOrderId,
+                        vendorId: $vendorId,
+                        productId: $current['product_id'],
+                        variantId: $current['variant_id'],
+                        qty: $current['qty'],
+                        price: $current['price'],
+                        label: $current['label'],
+                        startDate: $current['start_date'],
+                        endDate: $current['end_date'],
+                        status: $current['status']
+                    );
+
+                    $current = [
+                        'start_date' => $row['date'],
+                        'end_date' => $row['date'],
+                        'product_id' => $row['product_id'],
+                        'variant_id' => $row['variant_id'],
+                        'qty' => $row['qty'],
+                        'price' => $row['price'],
+                        'label' => $row['label'],
+                        'status' => $row['status'],
+                    ];
+                }
+            }
+
+            if ($current !== null) {
+                $finalEndDate = $current['status'] === 'active' ? null : $current['end_date'];
+
+                $this->seedDoiRange(
+                    draftOrderId: $draftOrderId,
+                    vendorId: $vendorId,
+                    productId: $current['product_id'],
+                    variantId: $current['variant_id'],
+                    qty: $current['qty'],
+                    price: $current['price'],
+                    label: $current['label'],
+                    startDate: $current['start_date'],
+                    endDate: $finalEndDate,
+                    status: $current['status']
+                );
+            }
         }
     }
     private function log(string $message, array $context = []): void
