@@ -38,6 +38,7 @@ use App\Services\FcmService;
 // OTP auth (public)
 Route::post('/auth/send-otp', [OtpAuthController::class, 'sendOtp']);
 Route::post('/auth/verify-otp', [OtpAuthController::class, 'verifyOtp']);
+Route::middleware('auth:sanctum')->post('/logout', [OtpAuthController::class, 'logout']);
 
 // Webhooks
 Route::post('/ses/feedback', [SesWebhookController::class, 'handle']);

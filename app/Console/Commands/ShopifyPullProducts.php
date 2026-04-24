@@ -15,8 +15,8 @@ class ShopifyPullProducts extends Command
      */
     protected $signature = 'shopify:pull-products 
                             {--since= : Optional ISO8601 timestamp (e.g., 2025-08-01T00:00:00Z)} 
-                            {--page=100 : Page size for GraphQL pagination}';
-
+                            {--page=100 : Page size for GraphQL pagination}
+                            {--dry-run : Do not write to DB}';
     /**
      * The console command description.
      */
@@ -26,16 +26,22 @@ class ShopifyPullProducts extends Command
     {
         $since   = $this->option('since') ?: null;
         $page    = (int) $this->option('page');
+        $dryRun  = $this->option('dry-run');
 
         $this->info("Pulling products from Shopify...");
         if ($since) {
             $this->info("  Filter: updated_at >= {$since}");
         }
         $this->info("  Page size: {$page}");
+        $this->info("  Mode: " . ($dryRun ? 'DRY RUN' : 'LIVE'));
 
         try {
-            $count = $sync->pullProducts($since, $page);
-            $this->info("✅ Sync complete. Upserted {$count} variants.");
+            $count = $sync->pullProducts($since, $page, $dryRun);
+            $this->info(
+                $dryRun
+                    ? "✅ Dry run complete. {$count} variants would be upserted."
+                    : "✅ Sync complete. Upserted {$count} variants."
+            );
             return self::SUCCESS;
         } catch (\Throwable $e) {
             $this->error("❌ Error: " . $e->getMessage());

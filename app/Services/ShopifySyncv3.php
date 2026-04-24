@@ -15,7 +15,7 @@ class ShopifySyncV3
     {
         $this->domain  = rtrim(config('shopify.domain', env('SHOPIFY_STORE_DOMAIN', 'ce1cd1.myshopify.com')));
         $this->version = config('shopify.version', env('SHOPIFY_API_VERSION', '2025-07'));
-        $this->token   = config('shopify.token', env('SHOPIFY_ACCESS_TOKEN','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'));
+        $this->token   = config('shopify.token', env('SHOPIFY_ACCESS_TOKEN', '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'));
     }
 
     /**
@@ -23,7 +23,7 @@ class ShopifySyncV3
      *  - products(product_id, title, vendor, product_type, handle, tags, status, img_src, product_sub_type, timestamps)
      *  - variants(variant_id, product_id, title, sku, position, price, compare_at_price, taxable, inventory_policy, inventory_quantity, timestamps)
      */
-    public function pullProducts(?string $updatedSince = null, int $pageSize = 100): int
+    public function pullProducts(?string $updatedSince = null, int $pageSize = 100, bool $dryRun = false): int
     {
         $endpoint = "https://{$this->domain}/admin/api/{$this->version}/graphql.json";
         $after = null;
@@ -101,46 +101,49 @@ GQL,
                 $p         = data_get($edge, 'node');
                 $productId = $this->gidToInt(data_get($p, 'id'));
 
-                DB::table('products')->updateOrInsert(
-                    ['product_id' => $productId],
-                    [
-                        'title'            => (string) data_get($p, 'title'),
-                        'vendor'           => data_get($p, 'vendor') ?? 'Dayli',
-                        'product_type'     => data_get($p, 'productType') ?? 'daily-need',
-                        'handle'           => data_get($p, 'handle') ?: 'empty-handle',
-                        'tags'             => $this->flattenTags(data_get($p, 'tags')),
-                        'status'           => data_get($p, 'status') ?: '""',
-                        'img_src'          => data_get($p, 'featuredImage.url') ?: '""',
-
-                        # ✅ write metafield value as-is (will be null if not set)
-                        //'product_sub_type' => data_get($p, 'metafield.value'),
-                        'product_sub_type' => $this->normalizeSubtype(data_get($p, 'metafield.value')),
-
-
-                        'updated_at'       => now(),
-                        'created_at'       => DB::raw('COALESCE(created_at, NOW())'),
-                    ]
-                );
+                if ($dryRun) {
+                    echo "[DRY] Product: {$productId} - " . data_get($p, 'title') . PHP_EOL;
+                } else {
+                    DB::table('products')->updateOrInsert(
+                        ['product_id' => $productId],
+                        [
+                            'title'            => (string) data_get($p, 'title'),
+                            'vendor'           => data_get($p, 'vendor') ?? 'Dayli',
+                            'product_type'     => data_get($p, 'productType') ?? 'daily-need',
+                            'handle'           => data_get($p, 'handle') ?: 'empty-handle',
+                            'tags'             => $this->flattenTags(data_get($p, 'tags')),
+                            'status'           => data_get($p, 'status') ?: '""',
+                            'img_src'          => data_get($p, 'featuredImage.url') ?: '""',
+                            'product_sub_type' => $this->normalizeSubtype(data_get($p, 'metafield.value')),
+                            'updated_at'       => now(),
+                            'created_at'       => DB::raw('COALESCE(created_at, NOW())'),
+                        ]
+                    );
+                }
 
                 foreach ((array) data_get($p, 'variants.nodes', []) as $v) {
                     $vid = $this->gidToInt(data_get($v, 'id'));
-                    DB::table('variants')->updateOrInsert(
-                        ['variant_id' => $vid],
-                        [
-                            'product_id'         => $productId,
-                            'title'              => data_get($v, 'title'),
-                            'sku'                => data_get($v, 'sku'),
-                            'position'           => (int) data_get($v, 'position', 1),
-                            'currency'           => 'INR',
-                            'price'              => $this->toFloat(data_get($v, 'price')),
-                            'compare_at_price'   => $this->nullableFloat(data_get($v, 'compareAtPrice')),
-                            'taxable'            => (int) (data_get($v, 'taxable') ? 1 : 0),
-                            'inventory_policy'   => data_get($v, 'inventoryPolicy') ?? 'deny',
-                            'inventory_quantity' => (int) data_get($v, 'inventoryQuantity', 0),
-                            'updated_at'         => now(),
-                            'created_at'         => DB::raw('COALESCE(created_at, NOW())'),
-                        ]
-                    );
+                    if ($dryRun) {
+                        echo "[DRY] Variant: {$vid} (Product {$productId}) - " . data_get($v, 'title') . PHP_EOL;
+                    } else {
+                        DB::table('variants')->updateOrInsert(
+                            ['variant_id' => $vid],
+                            [
+                                'product_id'         => $productId,
+                                'title'              => data_get($v, 'title'),
+                                'sku'                => data_get($v, 'sku'),
+                                'position'           => (int) data_get($v, 'position', 1),
+                                'currency'           => 'INR',
+                                'price'              => $this->toFloat(data_get($v, 'price')),
+                                'compare_at_price'   => $this->nullableFloat(data_get($v, 'compareAtPrice')),
+                                'taxable'            => (int) (data_get($v, 'taxable') ? 1 : 0),
+                                'inventory_policy'   => data_get($v, 'inventoryPolicy') ?? 'deny',
+                                'inventory_quantity' => (int) data_get($v, 'inventoryQuantity', 0),
+                                'updated_at'         => now(),
+                                'created_at'         => DB::raw('COALESCE(created_at, NOW())'),
+                            ]
+                        );
+                    }
                     $totalUpserts++;
                 }
             }
