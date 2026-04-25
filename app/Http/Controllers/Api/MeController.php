@@ -1051,4 +1051,32 @@ class MeController extends Controller
             'data' => $data,
         ]);
     }
+    public function operatorCustomers(Request $request)
+    {
+        $user = $request->user();
+
+        if (! $user->hasAnyRole(['admin', 'zone-manager', 'workman-delivery-boy'])) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        $q = trim((string) $request->query('q', ''));
+
+        $customers = \App\Models\User::query()
+            ->role('customer')
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($qq) use ($q) {
+                    $qq->where('name', 'like', "%{$q}%")
+                        ->orWhere('phone', 'like', "%{$q}%")
+                        ->orWhere('email', 'like', "%{$q}%");
+                });
+            })
+            ->select('id', 'name', 'phone', 'email', 'zone_id')
+            ->orderBy('name')
+            ->limit(30)
+            ->get();
+
+        return response()->json([
+            'data' => $customers,
+        ]);
+    }
 }

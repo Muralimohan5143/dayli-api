@@ -25,6 +25,7 @@ class SubscriptionChangeController extends Controller
         }
 
         $validated = $request->validate([
+            'customer_id' => 'nullable|integer|exists:users,id',
             'items' => 'required|array|min:1',
 
             'items.*.original_item_id' => 'required|integer',
@@ -61,13 +62,26 @@ class SubscriptionChangeController extends Controller
             'items.*.action'           => 'required|in:pause,cancel',
         ]);
 
+        $targetUserId = $this->resolveTargetUserId($request);
+
         try {
-            return DB::transaction(function () use ($validated) {
+            return DB::transaction(function () use ($validated, $targetUserId, $user) {
 
                 foreach ($validated['items'] as $item) {
 
                     /** @var DraftOrderItem $original */
                     $original = DraftOrderItem::findOrFail((int) $item['original_item_id']);
+
+                    $belongs = DB::table('draft_order_items as doi')
+                        ->join('draft_orders as dor', 'dor.id', '=', 'doi.draft_order_id')
+                        ->join('sub_change_requests as scr', 'scr.id', '=', 'dor.change_request_id')
+                        ->where('doi.id', $original->id)
+                        ->where('scr.for_user_id', $targetUserId)
+                        ->exists();
+
+                    if (!$belongs) {
+                        abort(403, 'Not allowed');
+                    }
 
                     // ✅ 1) Find latest row in this subscription chain (parent = latest row)
                     $current = DraftOrderItem::query()
@@ -121,7 +135,10 @@ class SubscriptionChangeController extends Controller
                             'cost_price'       => $item['cost_price'] ?? 0,
                             'discount_amount'  => $item['discount_amount'] ?? 0,
                             'discount_percent' => $item['discount_percent'] ?? 0,
-                            'source'           => 'pause_cancel',
+                            'source'           => !empty($validated['customer_id']) ? 'operator_pause_cancel' : 'pause_cancel',
+                            'for_user_id'      => $targetUserId,
+                            'by_user_id'       => $user->id,
+                            'actor_role'       => $user->getRoleNames()->first(),
                         ],
                     ]);
                 }
@@ -142,5 +159,22 @@ class SubscriptionChangeController extends Controller
                 'error'   => $e->getMessage(),
             ], 500);
         }
+    }
+    private function resolveTargetUserId(Request $request): int
+    {
+        $authUser = $request->user();
+        if (!$authUser) abort(401, 'Unauthenticated');
+
+        $customerId = $request->input('customer_id') ?: $request->query('customer_id');
+
+        if ($customerId) {
+            if (!$authUser->hasAnyRole(['admin', 'zone-manager', 'workman-delivery-boy'])) {
+                abort(403, 'Not allowed to manage customer subscriptions');
+            }
+
+            return (int) $customerId; // for_user_id
+        }
+
+        return (int) $authUser->id;
     }
 }

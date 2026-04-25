@@ -16,7 +16,9 @@ class SubscriptionsApiController extends Controller
             $user = $request->user();
             if (!$user) return response()->json(['message' => 'Unauthenticated'], 401);
 
-            $tab = $request->query('tab', 'active'); // active | paused | cancel
+            $targetUserId = $this->resolveTargetUserId($request);
+
+            $tab = $request->query('tab', 'active');
 
 
             if (!in_array($tab, ['active', 'paused', 'cancel'], true)) {
@@ -32,7 +34,7 @@ class SubscriptionsApiController extends Controller
             $latestIds = DB::table('draft_order_items as doi')
                 ->join('draft_orders as dor', 'dor.id', '=', 'doi.draft_order_id')
                 ->join('sub_change_requests as scr', 'scr.id', '=', 'dor.change_request_id')
-                ->where('scr.for_user_id', $user->id)
+                ->where('scr.for_user_id', $targetUserId)
                 ->where('scr.party_type', 'consumer')   // ✅ ADD THIS
 
                 ->where('dor.status', 'active')
@@ -120,19 +122,116 @@ class SubscriptionsApiController extends Controller
         }
     }
 
+    public function operatorCustomerSubscriptions(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated'], 401);
+        }
+
+        if (!$user->hasAnyRole(['admin', 'zone-manager', 'workman-delivery-boy'])) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        $tab = $request->query('tab', 'active');
+        if (!in_array($tab, ['active', 'paused', 'cancel'], true)) {
+            $tab = 'active';
+        }
+
+        $q = trim((string) $request->query('q', ''));
+
+        $asOf = $request->query('date')
+            ? \Carbon\Carbon::parse($request->query('date'))->startOfDay()
+            : \Carbon\Carbon::today();
+
+        $asOfDate = $asOf->toDateString();
+
+        $latestIds = DB::table('draft_order_items as doi')
+            ->join('draft_orders as dor', 'dor.id', '=', 'doi.draft_order_id')
+            ->join('sub_change_requests as scr', 'scr.id', '=', 'dor.change_request_id')
+            ->join('users as u', 'u.id', '=', 'scr.for_user_id')
+            ->leftJoin('products as p', 'p.product_id', '=', 'doi.product_id')
+            ->where('scr.party_type', 'consumer')
+            ->where('dor.status', 'active')
+            ->where(function ($qq) use ($asOfDate) {
+                $qq->whereNull('doi.end_date')
+                    ->orWhereDate('doi.end_date', '>=', $asOfDate);
+            })
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($qq) use ($q) {
+                    $qq->where('u.name', 'like', "%{$q}%")
+                        ->orWhere('u.phone', 'like', "%{$q}%")
+                        ->orWhere('u.email', 'like', "%{$q}%")
+                        ->orWhere('p.title', 'like', "%{$q}%");
+                });
+            })
+            ->selectRaw('MAX(doi.id) as id')
+            ->groupBy(
+                'scr.for_user_id',
+                'doi.draft_order_id',
+                'doi.variant_id',
+                DB::raw('COALESCE(doi.vendor_id,0)')
+            );
+
+        $rows = DB::table('draft_order_items as doi')
+            ->joinSub($latestIds, 'latest', function ($join) {
+                $join->on('doi.id', '=', 'latest.id');
+            })
+            ->join('draft_orders as dor', 'dor.id', '=', 'doi.draft_order_id')
+            ->join('sub_change_requests as scr', 'scr.id', '=', 'dor.change_request_id')
+            ->join('users as u', 'u.id', '=', 'scr.for_user_id')
+            ->leftJoin('products as p', 'p.product_id', '=', 'doi.product_id')
+            ->select([
+                'doi.id as item_id',
+                'doi.product_id',
+                'doi.variant_id',
+                'doi.vendor_id',
+                'doi.qty',
+                'doi.unit',
+                'doi.frequency_type',
+                'doi.start_date',
+                'doi.end_date',
+                'doi.status',
+                'doi.price_snapshot',
+                'scr.for_user_id as customer_id',
+                'u.name as customer_name',
+                'u.phone as customer_phone',
+                'u.email as customer_email',
+                'p.title as product_name',
+                'p.img_src as image',
+                'p.product_type as type_name',
+            ])
+            ->orderBy('u.name')
+            ->orderBy('p.title')
+            ->get()
+            ->filter(function ($row) use ($tab) {
+                $status = $row->status ?? 'active';
+
+                if ($tab === 'active') return $status === 'active';
+                if ($tab === 'paused') return $status === 'paused';
+                if ($tab === 'cancel') return $status === 'cancelled';
+
+                return true;
+            })
+            ->values();
+
+        return response()->json([
+            'data' => $rows,
+        ]);
+    }
+
     /**
      * ✅ Helper: Ensure this DraftOrderItem belongs to current customer
      */
     private function assertOwnership(Request $request, DraftOrderItem $item): void
     {
-        $user = $request->user();
-        if (!$user) abort(401, 'Unauthenticated');
+        $targetUserId = $this->resolveTargetUserId($request);
 
         $ok = DB::table('draft_order_items as doi')
             ->join('draft_orders as dor', 'dor.id', '=', 'doi.draft_order_id')
             ->join('sub_change_requests as scr', 'scr.id', '=', 'dor.change_request_id')
             ->where('doi.id', $item->id)
-            ->where('scr.for_user_id', $user->id)
+            ->where('scr.for_user_id', $targetUserId)
             ->exists();
 
         if (!$ok) abort(403, 'Not allowed');
@@ -509,5 +608,22 @@ class SubscriptionsApiController extends Controller
         });
 
         return response()->json(['ok' => true, 'item' => $new]);
+    }
+    private function resolveTargetUserId(Request $request): int
+    {
+        $authUser = $request->user();
+        if (!$authUser) abort(401, 'Unauthenticated');
+
+        $customerId = $request->input('customer_id') ?: $request->query('customer_id');
+
+        if ($customerId) {
+            if (!$authUser->hasAnyRole(['admin', 'zone-manager', 'workman-delivery-boy'])) {
+                abort(403, 'Not allowed to manage customer subscriptions');
+            }
+
+            return (int) $customerId; // for_user_id
+        }
+
+        return (int) $authUser->id; // self customer
     }
 }

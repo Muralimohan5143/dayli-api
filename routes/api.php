@@ -71,6 +71,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', fn(Request $request) => $request->user());
     Route::get('/me', [MeController::class, 'show']);
     Route::get('/notifications', [MeController::class, 'notifications']);
+    Route::get('/operator/customers', [MeController::class, 'operatorCustomers']);
+    Route::get('/operator/customer-subscriptions', [SubscriptionsApiController::class, 'operatorCustomerSubscriptions']);
     Route::post('/profile/service', [ProfileController::class, 'saveServiceProfile']);
 
     // --------------------------

@@ -45,7 +45,11 @@ class SubscriptionSelectionController extends Controller
         if (! $user) {
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
-        $zoneId = $this->ensureZoneIdForUser($user) ?? 1; // ✅ fallback to zone 1
+
+        $targetUserId = $this->resolveTargetUserId($request);
+        $targetUser = User::findOrFail($targetUserId);
+
+        $zoneId = $this->ensureZoneIdForUser($targetUser) ?? 1;
 
         if (!$zoneId) {
             return response()->json([
@@ -61,6 +65,7 @@ class SubscriptionSelectionController extends Controller
 
 
         $data = $request->validate([
+            'customer_id' => ['nullable', 'integer', 'exists:users,id'],
             'party_type' => ['required', 'in:consumer,supplier'],
 
             'items'                        => ['required', 'array', 'min:1'],
@@ -124,8 +129,8 @@ class SubscriptionSelectionController extends Controller
                     $q->whereNull('status')
                         ->orWhere('status', 'active');
                 })
-                ->whereHas('draftOrder.changeRequest', function ($q) use ($user) {
-                    $q->where('for_user_id', $user->id)
+                ->whereHas('draftOrder.changeRequest', function ($q) use ($targetUserId) {
+                    $q->where('for_user_id', $targetUserId)
                         ->whereIn('status', ['pending', 'approved']);
                 })
                 ->exists();
@@ -172,7 +177,7 @@ class SubscriptionSelectionController extends Controller
                  * ✅ REUSE SCR + DraftOrder if already pending/approved for same user + type + subtype
                  * NOTE: This assumes subtypes_json is a JSON column. If it's TEXT, swap the where line.
                  */
-                $scr = SubChangeRequest::where('for_user_id', $user->id)
+                $scr = SubChangeRequest::where('for_user_id', $targetUserId)
                     ->where('party_type', $partType)
                     ->where('subscription_type_id', $subscriptionTypeId)
                     ->whereIn('status', ['pending', 'approved'])
@@ -220,7 +225,7 @@ class SubscriptionSelectionController extends Controller
                 // If no existing SCR/DraftOrder -> create new
                 if (! $scr) {
                     $scr = SubChangeRequest::create([
-                        'for_user_id'            => $user->id,
+                        'for_user_id'            => $targetUserId,
                         'by_user_id'             => $user->id,
                         'party_type'             => $partType,
                         'from_id'                => null,
@@ -229,19 +234,24 @@ class SubscriptionSelectionController extends Controller
                         'subscription_type_id'   => $subscriptionTypeId,
                         'subtypes_json'          => json_encode(['selected_sub_type_ids' => $subTypeIds]),
                         'invoice_cycle'          => 'monthly',
-                        'change_reason'          => 'self_service',
+                        'change_reason'          => $targetUserId === (int) $user->id ? 'self_service' : 'operator_assisted',
                         'action'                 => 'create',
                         'status'                 => 'pending',
                         'priority'               => 3,
                         'payload'                => null,
-                        'meta'                   => ['source' => 'dayli_app'],
+                        'meta'                   => [
+                            'source'      => $targetUserId === (int) $user->id ? 'dayli_app' : 'operator_assisted',
+                            'for_user_id' => $targetUserId,
+                            'by_user_id'  => $user->id,
+                            'actor_role'  => $user->getRoleNames()->first(),
+                        ],
                     ]);
                 }
 
                 if (! $draft) {
                     $draft = DraftOrder::create([
                         'change_request_id'      => $scr->id,
-                        'customer_id'            => $user->shopify_customer_id ?? null,
+                        'customer_id'            => $targetUser->shopify_customer_id ?? null,
                         'vendor_id'              => null,
                         'zone_id'                => $zoneId,
                         'cadence'                => $groupFrequency,
@@ -323,8 +333,10 @@ class SubscriptionSelectionController extends Controller
         }
 
         // Optional safety: ensure this item belongs to this user
+        $targetUserId = $this->resolveTargetUserId($request);
+
         $scr = $item->draftOrder?->changeRequest;
-        if ($scr && $scr->for_user_id !== $user->id) {
+        if ($scr && (int) $scr->for_user_id !== (int) $targetUserId) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
@@ -377,5 +389,22 @@ class SubscriptionSelectionController extends Controller
         $user->save();
 
         return (int) $zone->id;
+    }
+    private function resolveTargetUserId(Request $request): int
+    {
+        $authUser = $request->user();
+        if (!$authUser) abort(401, 'Unauthenticated');
+
+        $customerId = $request->input('customer_id') ?: $request->query('customer_id');
+
+        if ($customerId) {
+            if (!$authUser->hasAnyRole(['admin', 'zone-manager', 'workman-delivery-boy'])) {
+                abort(403, 'Not allowed to manage customer subscriptions');
+            }
+
+            return (int) $customerId; // for_user_id
+        }
+
+        return (int) $authUser->id;
     }
 }
