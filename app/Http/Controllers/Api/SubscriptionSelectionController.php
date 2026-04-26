@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Artisan;
 use Carbon\Carbon;
 use App\Models\SubChangeRequest;
 use App\Models\DraftOrder;
@@ -156,6 +157,7 @@ class SubscriptionSelectionController extends Controller
             });
 
             $draftOrders = [];
+            $earliestBackfillDate = null;
 
             foreach ($grouped as $groupKey => $rows) {
                 $subTypeIds = $rows->pluck('sub_type_id')
@@ -262,7 +264,12 @@ class SubscriptionSelectionController extends Controller
                         'locked_at'              => null,
                         'timezone'               => 'Asia/Kolkata',
                         'title'                  => 'App selection – ' . $subscriptionTypeId,
-                        'meta'                   => ['source' => 'dayli_app'],
+                        'meta'                   => [
+                            'source'      => $targetUserId === (int) $user->id ? 'dayli_app' : 'operator_assisted',
+                            'for_user_id' => $targetUserId,
+                            'by_user_id'  => $user->id,
+                            'actor_role'  => $user->getRoleNames()->first(),
+                        ],
                     ]);
 
                     $scr->update(['draft_order_id' => $draft->id]);
@@ -281,6 +288,15 @@ class SubscriptionSelectionController extends Controller
                     $unit      = $row['unit']       ?? 'pcs';
                     $startDate = $row['start_date'] ?? $groupStartDate;
                     $endDate   = $row['end_date']   ?? $groupEndDate;
+                    if (
+                        $request->filled('customer_id') &&
+                        $startDate &&
+                        Carbon::parse($startDate)->lt(Carbon::today())
+                    ) {
+                        if ($earliestBackfillDate === null || Carbon::parse($startDate)->lt(Carbon::parse($earliestBackfillDate))) {
+                            $earliestBackfillDate = Carbon::parse($startDate)->toDateString();
+                        }
+                    }
 
                     DraftOrderItem::create([
                         'draft_order_id' => $draft->id,
@@ -309,6 +325,14 @@ class SubscriptionSelectionController extends Controller
             }
 
             DB::commit();
+
+            if ($request->filled('customer_id') && $earliestBackfillDate) {
+                Artisan::call('dayli:generate-daily-orders', [
+                    '--from' => $earliestBackfillDate,
+                    '--to' => Carbon::today()->toDateString(),
+                    '--customer_id' => $targetUserId,
+                ]);
+            }
 
             return response()->json([
                 'message'      => 'Selection stored successfully',
@@ -407,4 +431,5 @@ class SubscriptionSelectionController extends Controller
 
         return (int) $authUser->id;
     }
+    
 }

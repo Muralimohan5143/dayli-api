@@ -12,7 +12,7 @@ class GenerateDailyOrders extends Command
 {
     // php artisan dayli:generate-daily-orders --date=2026-01-01   
     // php artisan dayli:generate-daily-orders --from=2026-01-01 --to=2026-04-02
-    protected $signature = 'dayli:generate-daily-orders {--date=} {--from=} {--to=} {--dry}';
+    protected $signature = 'dayli:generate-daily-orders {--date=} {--from=} {--to=} {--customer_id=} {--dry}';
     protected $description = 'Create pending daily orders for active subscriptions';
 
     protected ?string $logFilePath = null;
@@ -54,6 +54,9 @@ class GenerateDailyOrders extends Command
                         ->orWhereDate('doi.end_date', '>=', $date);
                 })
                 ->where('doi.qty', '>', 0)
+                ->when($this->option('customer_id'), function ($q, $customerId) {
+                    $q->where('scr.for_user_id', (int) $customerId);
+                })
                 ->select([
                     'scr.for_user_id as customer_id',
                     'u.display_name as customer_name',
