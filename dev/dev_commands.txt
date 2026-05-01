@@ -187,7 +187,7 @@ From now correct flow
 Local:
 flutter build web --release --dart-define=API_BASE=https://api.dayli.in/api
 Upload:
-scp -r .\build\web deploy@15.207.182.13:/var/www/dayli-web/repo/build/
+scp -r .\build\web deploy@15.207.182.13:/var/www/dayli-admin-web/repo/build/
 Server:
 cd ~/deploy-scripts
 ./deploy_dayli_web.sh

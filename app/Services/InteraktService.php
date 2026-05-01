@@ -58,4 +58,77 @@ class InteraktService
             'payload' => $payload,
         ];
     }
+    public function sendNoDeliveryAlert(string $phoneNumber, array $payloadData): array
+    {
+        $templateKey = $payloadData['template_key'] ?? 'no_milk_sudden';
+        $template = $this->getTemplateConfig($templateKey);
+
+        $bodyValues = [];
+
+        foreach (($template['body_values'] ?? []) as $field) {
+            $bodyValues[] = (string) ($payloadData[$field] ?? '');
+        }
+
+        $payload = [
+            "countryCode"  => "+91",
+            "phoneNumber"  => $phoneNumber,
+            "callbackData" => "no_order_delivery",
+            "type"         => "Template",
+            "template"     => [
+                "name"         => $template['template_name'],
+                "languageCode" => $template['language_code'] ?? 'en',
+                "bodyValues"   => $bodyValues,
+            ],
+        ];
+
+
+        if (!config('services.interakt_dayli.enabled')) {
+
+            $testNumber = env('INTERAKT_TEST_NUMBER');
+
+            if ($testNumber) {
+                $payload['phoneNumber'] = $testNumber;
+            }
+
+            Log::info('INTERAKT TEST MODE - real customer replaced with test number', [
+                'original_phone' => $phoneNumber,
+                'test_phone' => $payload['phoneNumber'],
+                'payload' => $payload,
+            ]);
+        }
+        $response = Http::withHeaders([
+            "Content-Type"  => "application/json",
+            "Authorization" => "Basic " . $this->apiKey,
+        ])->post($this->baseUrl, $payload);
+
+        Log::info('Interakt No Delivery response', [
+            'status'  => $response->status(),
+            'body'    => $response->json(),
+            'payload' => $payload,
+        ]);
+
+        return [
+            'ok'      => $response->successful(),
+            'status'  => $response->status(),
+            'body'    => $response->json(),
+            'payload' => $payload,
+        ];
+    }
+
+    private function getTemplateConfig(string $key): array
+    {
+        $path = storage_path('app/interakt_templates.json');
+
+        if (!file_exists($path)) {
+            throw new \Exception('Interakt templates JSON not found: ' . $path);
+        }
+
+        $json = json_decode(file_get_contents($path), true);
+
+        if (!isset($json[$key])) {
+            throw new \Exception("Interakt template key not found: {$key}");
+        }
+
+        return $json[$key];
+    }
 }

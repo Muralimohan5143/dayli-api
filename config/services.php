@@ -43,7 +43,10 @@ return [
     'interakt' => [
         'key' => env('INTERAKT_API_KEY'),
         'url' => env('INTERAKT_API_URL', 'https://api.interakt.ai/v1/public/message/'),
+        'enabled'  => env('INTERAKT_ENABLED', true),
     ],
+
+
     // ✅ Add this for Google Maps / Geocoding
     'google' => [
         'maps_api_key' => env('GOOGLE_MAPS_API_KEY'),

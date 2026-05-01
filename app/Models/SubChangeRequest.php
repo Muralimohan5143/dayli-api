@@ -181,6 +181,11 @@ class SubChangeRequest extends Model
         return $this->draftOrderItem();
     }
 
+    public function user()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'for_user_id');
+    }
+
 
     // $cr = SubChangeRequest::where('for_user_id', $userId)
     // ->where('status', 'approved')

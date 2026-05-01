@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\UserServiceController;
 use App\Http\Controllers\SesWebhookController;
 use App\Http\Controllers\Api\DeviceTokenController;
 use App\Http\Controllers\Api\OutboxReportController;
+use App\Http\Controllers\Api\NoOrderDeliveryController;
 use App\Services\FcmService;
 
 /*
@@ -59,7 +60,7 @@ Route::get('/check-location', [MobileController::class, 'checkLocation']);
 // ✅ Zone resolve must be PUBLIC (needed during login/signup before token)
 Route::get('/zone/resolve', [ZoneApiController::class, 'resolveFromLatLng']);
 
-
+Route::post('/no-order-delivery/send', [NoOrderDeliveryController::class, 'send']);
 // ==============================
 // PROTECTED (Sanctum Bearer token)
 // ==============================
