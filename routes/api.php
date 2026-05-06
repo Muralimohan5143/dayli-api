@@ -61,6 +61,11 @@ Route::get('/check-location', [MobileController::class, 'checkLocation']);
 Route::get('/zone/resolve', [ZoneApiController::class, 'resolveFromLatLng']);
 
 Route::post('/no-order-delivery/send', [NoOrderDeliveryController::class, 'send']);
+Route::get('/no-order-delivery/options', [NoOrderDeliveryController::class, 'options']);
+Route::get('/no-order-delivery/products', [NoOrderDeliveryController::class, 'products']);
+Route::get('/no-order-delivery/vendors', [NoOrderDeliveryController::class, 'vendors']);
+Route::get('/no-order-delivery/vendor-products', [NoOrderDeliveryController::class, 'vendorProducts']);
+Route::get('/no-order-delivery/delivery-execs', [NoOrderDeliveryController::class, 'deliveryExecs']);
 // ==============================
 // PROTECTED (Sanctum Bearer token)
 // ==============================
