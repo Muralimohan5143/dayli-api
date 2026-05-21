@@ -58,8 +58,9 @@ class GenerateDailyOrders extends Command
                     $q->where('scr.for_user_id', (int) $customerId);
                 })
                 ->select([
-                    'scr.for_user_id as customer_id',
-                    'u.display_name as customer_name',
+                    'scr.for_user_id as actor_id',
+                    'scr.party_type',
+                    'u.display_name as actor_name',
                     'scr.zone_id as zone_id',
                     'do.id as draft_order_id',
                     'doi.id as doi_id',
@@ -107,7 +108,7 @@ class GenerateDailyOrders extends Command
                     continue;
                 }
                 // 🔥 ADD THIS LINE HERE
-                $this->writeLog("DEBUG | customer={$item->customer_id} | date={$date} | freq={$item->frequency_type} | start={$item->start_date}");
+                $this->writeLog("DEBUG | party_type={$item->party_type} | actor_id={$item->actor_id} | date={$date} | freq={$item->frequency_type} | start={$item->start_date}");
 
                 // // 🔥 ADD HERE (exact place)
                 // if ($item->frequency_type === 'alternate_days') {
@@ -118,12 +119,13 @@ class GenerateDailyOrders extends Command
                 //     }
                 // }
 
-                $key = $item->customer_id . '_' . $date;
+                $key = $item->party_type . '_' . $item->actor_id . '_' . $date;
 
                 if (!isset($grouped[$key])) {
                     $grouped[$key] = [
-                        'customer_id' => $item->customer_id,
-                        'customer_name' => $item->customer_name,
+                        'party_type' => $item->party_type,
+                        'actor_id' => $item->actor_id,
+                        'actor_name' => $item->actor_name,
                         'zone_id' => $item->zone_id,
                         'draft_order_id' => $item->draft_order_id,
                         'items' => [],
@@ -135,28 +137,31 @@ class GenerateDailyOrders extends Command
             foreach ($grouped as $c) {
 
                 $existingOrder = DB::table('orders')
-                    ->where('customer_id', $c['customer_id'])
+                    ->when(
+                        $c['party_type'] === 'supplier',
+                        fn($q) => $q->where('vendor_id', $c['actor_id']),
+                        fn($q) => $q->where('customer_id', $c['actor_id'])
+                    )
                     ->whereDate('delivery_date', $date)
                     ->first();
-
                 if ($existingOrder) {
                     $orderId = $existingOrder->id;
                     $skippedForDate++;
                     $totalSkipped++;
 
-                    $this->writeLog("[SKIP ORDER CREATE] order already exists | customer_id={$c['customer_id']} | customer_name={$c['customer_name']} | zone_id={$c['zone_id']} | date={$date}");
+                    $this->writeLog("[SKIP ORDER CREATE] order already exists | party_type={$c['party_type']} | actor_id={$c['actor_id']} | actor_name={$c['actor_name']} | zone_id={$c['zone_id']} | date={$date}");
                 } else {
                     if ($isDryRun) {
                         $createdForDate++;
                         $totalCreated++;
 
-                        $message = "[DRY] would create order | customer_id={$c['customer_id']} | customer_name={$c['customer_name']} | zone_id={$c['zone_id']} | draft_order_id={$c['draft_order_id']} | date={$date}";
+                        $message = "[DRY] would create order | party_type={$c['party_type']} | actor_id={$c['actor_id']} | actor_name={$c['actor_name']} | zone_id={$c['zone_id']} | draft_order_id={$c['draft_order_id']} | date={$date}";
                         $this->line($message);
                         $this->writeLog($message);
 
                         // simulate order items too
                         foreach ($c['items'] as $item) {
-                            $message = "[DRY] would create order_item | customer_id={$c['customer_id']} | doi_id={$item->doi_id} | product_id={$item->product_id} | variant_id={$item->variant_id} | qty={$item->qty} | date={$date}";
+                            $message = "[DRY] would create order_item | party_type={$c['party_type']} | actor_id={$c['actor_id']} | doi_id={$item->doi_id} | product_id={$item->product_id} | variant_id={$item->variant_id} | qty={$item->qty} | date={$date}";
                             $this->line($message);
                             $this->writeLog($message);
                         }
@@ -164,11 +169,13 @@ class GenerateDailyOrders extends Command
                         continue;
                     }
 
-                    $orderNumber = 'ORD-' . str_replace('-', '', $date) . '-' . (int) $c['customer_id'];
+                    $prefix = $c['party_type'] === 'supplier' ? 'SUP' : 'ORD';
+                    $orderNumber = $prefix . '-' . str_replace('-', '', $date) . '-' . (int) $c['actor_id'];
 
                     $orderId = DB::table('orders')->insertGetId([
                         'order_type' => 'subscription',
-                        'customer_id' => (int) $c['customer_id'],
+                        'customer_id' => (int) $c['actor_id'],
+                        'vendor_id'   => $c['party_type'] === 'supplier' ? (int) $c['actor_id'] : null,
                         'zone_id' => $c['zone_id'] ? (int) $c['zone_id'] : null,
                         'delivery_date' => $date,
                         'delivery_status' => 'pending',
@@ -187,7 +194,7 @@ class GenerateDailyOrders extends Command
                     $createdForDate++;
                     $totalCreated++;
 
-                    $this->writeLog("[CREATE] order created | order_id={$orderId} | customer_id={$c['customer_id']} | customer_name={$c['customer_name']} | zone_id={$c['zone_id']} | draft_order_id={$c['draft_order_id']} | date={$date}");
+                    $this->writeLog("[CREATE] order created | order_id={$orderId} | party_type={$c['party_type']} | actor_id={$c['actor_id']} | actor_name={$c['actor_name']} | zone_id={$c['zone_id']} | draft_order_id={$c['draft_order_id']} | date={$date}");
                 }
 
                 if ($isDryRun) {
