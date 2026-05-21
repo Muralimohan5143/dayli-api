@@ -218,7 +218,17 @@ class ImportNewSheetUsers extends Command
                     &$createdUsers,
                     &$updatedUsers
                 ) {
-                    $user = DB::table('users')->where('phone', $phoneNorm)->first();
+                    $phone10 = $phoneNorm;
+                    $phone91 = '+91' . $phone10;
+
+                    $user = DB::table('users')
+                        ->where('phone', $phone10)
+                        ->orWhere('phone', $phone91)
+                        ->orWhere('phone_normalized', $phone10)
+                        ->orWhere('phone_normalized', $phone91)
+                        ->orWhere('natural_key', $phone10)
+                        ->orWhere('natural_key', $phone91)
+                        ->first();
 
                     if ($user) {
                         $update = [
@@ -242,7 +252,8 @@ class ImportNewSheetUsers extends Command
                         $insert = [
                             'display_name' => $name,
                             'name' => $name,
-                            'phone' => $phoneNorm,
+                            'phone' => '+91' . $phoneNorm,
+
                             'password' => bcrypt(Str::random(16)),
                             'created_at' => now(),
                             'updated_at' => now(),

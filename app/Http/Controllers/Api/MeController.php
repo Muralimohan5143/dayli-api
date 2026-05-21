@@ -321,41 +321,44 @@ class MeController extends Controller
         // ✅ Fetch today's order status for these customers (single query, no N+1)
         $customerIds = $baseRows->pluck('customer_id')->filter()->unique()->values()->all();
 
-        // ✅ Ensure daily order rows exist for targetDate (default: today)
-        // This makes sure "today" shows in pending dates + UI status works.
-        $requestedDate = $request->query('delivery_date') ?? $request->query('deliveryDate'); // ✅ accept both
+        $requestedDate = $request->query('delivery_date') ?? $request->query('deliveryDate');
         $targetDate = $requestedDate ? Carbon::parse($requestedDate)->toDateString() : $today;
 
+        // // ✅ Ensure daily order rows exist for targetDate (default: today)
+        // // This makes sure "today" shows in pending dates + UI status works.
+        // $requestedDate = $request->query('delivery_date') ?? $request->query('deliveryDate'); // ✅ accept both
+        // $targetDate = $requestedDate ? Carbon::parse($requestedDate)->toDateString() : $today;
 
-        if (!empty($customerIds)) {
 
-            $existingCustomerIds = Order::query()
-                ->whereIn('customer_id', $customerIds)
-                ->whereDate('delivery_date', $targetDate)
-                ->pluck('customer_id')
-                ->unique()
-                ->all();
+        // if (!empty($customerIds)) {
 
-            $missingCustomerIds = array_values(array_diff($customerIds, $existingCustomerIds));
+        //     $existingCustomerIds = Order::query()
+        //         ->whereIn('customer_id', $customerIds)
+        //         ->whereDate('delivery_date', $targetDate)
+        //         ->pluck('customer_id')
+        //         ->unique()
+        //         ->all();
 
-            if (!empty($missingCustomerIds)) {
-                $now = Carbon::now();
+        //     $missingCustomerIds = array_values(array_diff($customerIds, $existingCustomerIds));
 
-                $insertRows = array_map(function ($cid) use ($zoneId, $subTypeId, $targetDate, $now) {
-                    return [
-                        'customer_id'          => (int) $cid,
-                        'zone_id'              => (int) $zoneId,
-                        // 'subscription_type_id' => (int) $subTypeId,
-                        'delivery_date'        => $targetDate,
-                        'delivery_status'      => 'pending',
-                        'created_at'           => $now,
-                        'updated_at'           => $now,
-                    ];
-                }, $missingCustomerIds);
+        //     if (!empty($missingCustomerIds)) {
+        //         $now = Carbon::now();
 
-                DB::table('orders')->insert($insertRows);
-            }
-        }
+        //         $insertRows = array_map(function ($cid) use ($zoneId, $subTypeId, $targetDate, $now) {
+        //             return [
+        //                 'customer_id'          => (int) $cid,
+        //                 'zone_id'              => (int) $zoneId,
+        //                 // 'subscription_type_id' => (int) $subTypeId,
+        //                 'delivery_date'        => $targetDate,
+        //                 'delivery_status'      => 'pending',
+        //                 'created_at'           => $now,
+        //                 'updated_at'           => $now,
+        //             ];
+        //         }, $missingCustomerIds);
+
+        //         DB::table('orders')->insert($insertRows);
+        //     }
+        // }
 
 
         // ✅ NEW: For modal dropdowns (NOT customer-wise)

@@ -18,7 +18,7 @@ class ReconcileReportController extends Controller
         $rows = DB::table('reconciliation_reports')
             ->where('zone_id', $zoneId)
             ->orderByDesc('delivery_date')
-            ->limit(30)
+            ->limit(60)
             ->get();
 
         return response()->json(['data' => $rows]);

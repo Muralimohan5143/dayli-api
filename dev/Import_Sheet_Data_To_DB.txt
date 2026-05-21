@@ -1,0 +1,32 @@
+
+
+
+# to import sheet to data new customers int users table
+php artisan import:new-sheet-users "C:\Users\mandl\Downloads\New Microsoft Excel Worksheet.xlsx" --default-zone=1 --dry-run
+
+
+php artisan import:merged-milk-sheet "C:\Users\mandl\Downloads\New Microsoft Excel Worksheet.xlsx" --dry-run
+
+
+php artisan import:merged-milk-sheet "C:\Users\mandl\Downloads\New Microsoft Excel Worksheet.xlsx" 
+
+php artisan dayli:generate-daily-orders --from=2026-04-01 --to=2026-05-19 --dry    
+
+php artisan dayli:generate-daily-orders --from=2026-04-01 --to=2026-05-20 
+
+
+php artisan dayli:seed-vendor-milk-supply --dry-run --from=2026-04-01 --to=2026-05-19 --log-file=vendor_seed_april.log   
+
+php artisan dayli:seed-vendor-milk-supply  --from=2026-04-01 --to=2026-05-20  
+
+php artisan dayli:generate-daily-supplier-orders --from=2026-04-01 --to=2026-05-20 --dry    
+
+php artisan dayli:generate-daily-supplier-orders --from=2026-04-01 --to=2026-04-20  
+
+
+
+
+# This is for automatically saves pending of both supplier and consumer orders
+
+
+php artisan dayli:reconcile-backfill --from=2026-04-01 --to=2026-05-20 --zone=1 --subtype=3

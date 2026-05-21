@@ -571,34 +571,14 @@ class ImportMergedMilkSheetService
     {
         $map = [];
 
-        /*
-     * APRIL 1 → 20 IMPORT (HARDCODED)
-     *
-     * AC = Day 1  (28)
-     * AB = Day 2  (27)
-     * AA = Day 3  (26)
-     * Z  = Day 4  (25)
-     * Y  = Day 5  (24)
-     * X  = Day 6  (23)
-     * W  = Day 7  (22)
-     * V  = Day 8  (21)
-     * U  = Day 9  (20)
-     * T  = Day 10 (19)
-     * S  = Day 11 (18)
-     * R  = Day 12 (17)
-     * Q  = Day 13 (16)
-     * P  = Day 14 (15)
-     * O  = Day 15 (14)
-     * N  = Day 16 (13)
-     * M  = Day 17 (12)
-     * L  = Day 18 (11)
-     * K  = Day 19 (10)
-     * J  = Day 20 (9)
-     */
+        // April 1 to April 30 => BG to AD
+        foreach (range(58, 29) as $offset => $colIndex) {
+            $map[$colIndex] = Carbon::create(2026, 4, $offset + 1);
+        }
 
-        for ($day = 1; $day <= 20; $day++) {
-            $colIndex = 29 - $day; // 1->28(AC), 2->27(AB), ... 20->9(J)
-            $map[$colIndex] = Carbon::create(2026, 4, $day);
+        // May 1 to May 20 => AC to J
+        foreach (range(28, 9) as $offset => $colIndex) {
+            $map[$colIndex] = Carbon::create(2026, 5, $offset + 1);
         }
 
         return $map;
@@ -895,6 +875,12 @@ class ImportMergedMilkSheetService
             'vijaya curd 500 ml' => [
                 'vijaya curd 500 ml',
                 'vijaya curd 500ml',
+            ],
+
+            'vijaya butter milk small' => [
+                'vijaya butter milk',
+                'vijaya butter milk small',
+                'Vijaya-Butter-Milk-Small',
             ],
         ];
 
