@@ -40,10 +40,10 @@ class SubscriptionsApiController extends Controller
                 ->where('dor.status', 'active')
 
                 // ✅ start_date can be NULL OR <= asOf
-                // ->where(function ($q) use ($asOfDate) {
-                //     $q->whereNull('doi.start_date')
-                //         ->orWhereDate('doi.start_date', '<=', $asOfDate);
-                // })
+                ->where(function ($q) use ($asOfDate) {
+                    $q->whereNull('doi.start_date')
+                        ->orWhereDate('doi.start_date', '<=', $asOfDate);
+                })
 
                 // ✅ end_date can be NULL OR >= asOf
                 ->where(function ($q) use ($asOfDate) {
@@ -153,6 +153,10 @@ class SubscriptionsApiController extends Controller
             ->leftJoin('products as p', 'p.product_id', '=', 'doi.product_id')
             ->where('scr.party_type', 'consumer')
             ->where('dor.status', 'active')
+            ->where(function ($qq) use ($asOfDate) {
+                $qq->whereNull('doi.start_date')
+                    ->orWhereDate('doi.start_date', '<=', $asOfDate);
+            })
             ->where(function ($qq) use ($asOfDate) {
                 $qq->whereNull('doi.end_date')
                     ->orWhereDate('doi.end_date', '>=', $asOfDate);
