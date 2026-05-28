@@ -174,6 +174,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/add-item-options',  [MeController::class, 'addItemOptions']);
         Route::post('/item/update-qty',  [MeController::class, 'updateItemQty']);
         Route::post('/create-order',     [MeController::class, 'createOrderFromMyWork']);
+        Route::get('/manual-today-order-preview', [MeController::class, 'manualTodayOrderPreview']);
+        Route::post('/manual-today-order', [MeController::class, 'createManualTodayOrder']);
+        Route::post('/manual-new-customer-order', [MeController::class, 'createManualNewCustomerOrder']);
 
         // Subscription type picker
         Route::get('/subscription-types', [MeController::class, 'myWorkSubscriptionTypes']);

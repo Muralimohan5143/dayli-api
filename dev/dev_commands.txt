@@ -154,8 +154,8 @@ php artisan serve --host=localhost --port=8000
 flutter run -d web-server --web-hostname=0.0.0.0 --web-port=8001
     
 
-# for build apk in mobile 
-flutter build apk --debug  --dart-define=API_BASE=https://api.dayli.in/api 
+# for production-build apk in mobile 
+flutter build apk  --dart-define=API_BASE=https://api.dayli.in/api 
 adb install -r build/app/outputs/flutter-apk/app-debug.apk
 
 

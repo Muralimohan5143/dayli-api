@@ -412,6 +412,8 @@ class MeController extends Controller
 
 
         $todayOrdersMap = collect();
+        $orderItemsMap = collect();
+        $orderIds = [];
         if (!empty($customerIds)) {
             $todayOrders = Order::query()
                 ->select('id', 'customer_id', 'delivery_status')
@@ -431,7 +433,20 @@ class MeController extends Controller
             $orderItemsMap = collect(); // order_id => (product_id|variant_id => order_item)
             if (!empty($orderIds)) {
                 $orderItems = OrderItem::query()
-                    ->select('order_id', 'product_id', 'variant_id', 'quantity')
+                    ->select(
+                        'id',
+                        'order_id',
+                        'product_id',
+                        'variant_id',
+                        'title',
+                        'variant',
+                        'image_url',
+                        'quantity',
+                        'unit_price',
+                        'line_total',
+                        'actuals_date',
+                        'meta'
+                    )
                     ->whereIn('order_id', $orderIds)
                     ->get();
 
@@ -492,17 +507,27 @@ class MeController extends Controller
 
             $customerId   = (int) ($c->customer_id ?? 0);
             $to           = $todayOrdersMap->get($customerId);
+
+            // ✅ If no order generated for target date, don't show customer/item in UI
+            if (!$to) {
+                return null;
+            }
+
             $pendingDates = $pendingByCustomer[$customerId] ?? [];
 
-            // ✅ Override qty with order_items if exists (even if 0)
+            // Show only actual generated order_items for today
             $oiQty = null;
 
             if ($to) {
-                $key = ((int)$item->product_id) . '|' . ((int)$item->variant_id);
+                $key = ((int)$item->product_id) . '|' . ((int)($item->variant_id ?? 0));
                 $oi = data_get($orderItemsMap, $to->id . '.' . $key);
-                if ($oi) {
-                    $oiQty = (float) $oi->quantity;
+
+                // If this item did not generate today, skip it
+                if (!$oi) {
+                    return null;
                 }
+
+                $oiQty = (float) $oi->quantity;
             }
 
             return [
@@ -523,7 +548,7 @@ class MeController extends Controller
                 'product_title'       => optional($item->product)->title ?? 'Product',
                 'image_url'           => optional($item->product)->img_src ?? '',
 
-                'qty' => $oiQty !== null ? $oiQty : (float) $item->qty,
+                'qty' => $oiQty,
                 'unit'                => $item->unit,
                 'price_snapshot'      => $item->price_snapshot,
                 'frequency_type'      => $item->frequency_type,
@@ -533,6 +558,81 @@ class MeController extends Controller
                 'variant_id'          => (int) $item->variant_id,
             ];
         })->filter()->values();
+
+        // ✅ ADD manual today items also.
+        // These are order_items created from "Add Order" for existing customer.
+        // They do not have draft_order_items, so old UI query was skipping them.
+        $displayedKeys = $rows->map(function ($r) {
+            return ((int) $r['today_order_id']) . '|' .
+                ((int) $r['product_id']) . '|' .
+                ((int) ($r['variant_id'] ?? 0));
+        })->flip();
+
+        $customerInfoByCustomerId = $baseRows
+            ->groupBy('customer_id')
+            ->map(fn($g) => $g->first());
+
+        foreach ($todayOrdersMap as $customerId => $order) {
+            if (!$order) {
+                continue;
+            }
+
+            $customerInfo = $customerInfoByCustomerId->get($customerId);
+            if (!$customerInfo) {
+                continue;
+            }
+
+            $itemsForOrder = $orderItemsMap->get($order->id, collect());
+
+            foreach ($itemsForOrder as $key => $oi) {
+                $displayKey = ((int) $order->id) . '|' .
+                    ((int) ($oi->product_id ?? 0)) . '|' .
+                    ((int) ($oi->variant_id ?? 0));
+
+                // already shown from draft_order_items
+                if ($displayedKeys->has($displayKey)) {
+                    continue;
+                }
+
+                $meta = is_array($oi->meta ?? null)
+                    ? $oi->meta
+                    : json_decode($oi->meta ?? '{}', true);
+
+                if (($meta['source'] ?? '') !== 'manual_today_request') {
+                    continue;
+                }
+
+                $rows->push([
+                    'draft_order_item_id' => 0,
+                    'draft_order_id'      => 0,
+
+                    'customer_id'         => (int) $customerId,
+                    'customer_name'       => $customerInfo->customer_name ?? 'Customer',
+                    'customer_phone'      => $customerInfo->customer_phone ?? '',
+                    'pending_dates'       => $pendingByCustomer[$customerId] ?? [],
+
+                    'today_order_id'      => (int) $order->id,
+                    'delivery_status'     => $order->delivery_status ?? 'pending',
+
+                    'nagar'               => $customerInfo->nagar ?? '',
+                    'address'             => $customerInfo->address ?? '',
+
+                    'product_title'       => $oi->title ?? 'Product',
+                    'image_url'           => $oi->image_url ?? '',
+
+                    'qty'                 => (float) ($oi->quantity ?? 0),
+                    'unit'                => '',
+                    'price_snapshot'      => $oi->unit_price ?? 0,
+                    'frequency_type'      => 'manual_today',
+                    'item_status'         => 'active',
+
+                    'product_id'          => (int) ($oi->product_id ?? 0),
+                    'variant_id'          => (int) ($oi->variant_id ?? 0),
+                ]);
+            }
+        }
+
+        $rows = $rows->values();
 
         // ✅ Filter list by requested tab type
         if ($type === 'pending') {
@@ -1054,6 +1154,332 @@ class MeController extends Controller
             'data' => $data,
         ]);
     }
+
+    public function manualTodayOrderPreview(Request $request)
+    {
+        $request->validate([
+            'customer_id' => 'required|integer',
+            'subscription_type_id' => 'required|integer',
+        ]);
+
+        $customerId = (int) $request->customer_id;
+        $subscriptionTypeId = (int) $request->subscription_type_id;
+
+        $customer = DB::table('users as u')
+            ->where('u.id', $customerId)
+            ->select(
+                'u.id',
+                'u.name',
+                'u.phone',
+                'u.zone_id',
+                DB::raw("'' as address"),
+                DB::raw("'' as nagar")
+            )
+            ->first();
+
+        $items = DB::table('draft_order_items as doi')
+            ->join('draft_orders as do', 'do.id', '=', 'doi.draft_order_id')
+            ->join('sub_change_requests as scr', 'scr.id', '=', 'do.change_request_id')
+            ->leftJoin('products as p', 'p.product_id', '=', 'doi.product_id')
+            ->where('scr.for_user_id', $customerId)
+            ->where('scr.party_type', 'consumer')
+            ->where('scr.subscription_type_id', $subscriptionTypeId)
+            ->where('do.status', 'active')
+            ->where('doi.status', 'active')
+            ->select(
+                'doi.product_id',
+                'doi.variant_id',
+                'doi.qty',
+                'doi.unit',
+                'doi.price_snapshot',
+                DB::raw("COALESCE(p.title, 'Item') as title"),
+                DB::raw("COALESCE(p.img_src, '') as image_url")
+            )
+            ->get();
+
+        $subtypes = DB::table('subscription_sub_types')
+            ->where('subscription_type_id', $subscriptionTypeId)
+            ->where('status', 'active')
+            ->pluck('slug')
+            ->toArray();
+
+        $products = DB::table('products as p')
+            ->leftJoin('variants as v', function ($join) {
+                $join->on('v.product_id', '=', 'p.product_id')
+                    ->where('v.position', '=', 1);
+            })
+            ->whereIn('p.product_sub_type', $subtypes)
+            ->where(function ($q) {
+                $q->whereNull('p.status')
+                    ->orWhere('p.status', 'active');
+            })
+            ->select(
+                'p.product_id',
+                'p.title',
+                'p.img_src',
+                'p.product_sub_type',
+                'v.variant_id',
+                'v.price'
+            )
+            ->orderBy('p.title')
+            ->get();
+
+        return response()->json([
+            'customer' => $customer,
+            'items' => $items,
+            'products' => $products,
+        ]);
+    }
+
+    public function createManualTodayOrder(Request $request)
+    {
+        $request->validate([
+            'customer_id' => 'required|integer',
+            'subscription_type_id' => 'required|integer',
+            'delivery_date' => 'nullable|date',
+            'reason' => 'nullable|string|max:255',
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|integer',
+            'items.*.variant_id' => 'nullable|integer',
+            'items.*.qty' => 'required|integer|min:1|max:999',
+        ]);
+
+        $user = $request->user();
+        $subscriptionTypeId = (int) $request->subscription_type_id;
+        $customerId = (int) $request->customer_id;
+
+        $deliveryDate = $request->input('delivery_date')
+            ? Carbon::parse($request->delivery_date)->toDateString()
+            : Carbon::today()->toDateString();
+
+        $approvedService = $this->approvedDeliveryServiceForUser((int) $user->id, $subscriptionTypeId);
+
+        if (!$approvedService) {
+            return response()->json(['message' => 'Delivery service not approved'], 403);
+        }
+
+        $zoneId = (int) ($approvedService->zone_id ?? $user->zone_id ?? 0);
+
+        return DB::transaction(function () use ($request, $customerId, $zoneId, $deliveryDate, $user, $subscriptionTypeId) {
+            $order = Order::query()
+                ->where('customer_id', $customerId)
+                ->whereDate('delivery_date', $deliveryDate)
+                ->orderByDesc('id')
+                ->first();
+
+            if (!$order) {
+                $order = Order::create([
+                    'customer_id' => $customerId,
+                    'zone_id' => $zoneId,
+                    'status' => 'pending',
+                    'delivery_date' => $deliveryDate,
+                    'delivery_status' => 'pending',
+                    'meta' => [
+                        'source' => 'manual_today_request',
+                        'reason' => $request->reason ?? 'customer_requested_today',
+                        'created_by_user_id' => (int) $user->id,
+                    ],
+                ]);
+            }
+
+            foreach ($request->items as $row) {
+                $productId = (int) $row['product_id'];
+                $variantId = !empty($row['variant_id']) ? (int) $row['variant_id'] : null;
+                $qty = (int) $row['qty'];
+
+                $product = DB::table('products as p')
+                    ->leftJoin('variants as v', 'v.variant_id', '=', DB::raw($variantId ?: '0'))
+                    ->where('p.product_id', $productId)
+                    ->select(
+                        'p.title',
+                        'p.img_src',
+                        'v.title as variant_title',
+                        'v.price'
+                    )
+                    ->first();
+
+                $unitPrice = is_numeric($product->price ?? null) ? (float) $product->price : 0;
+                $lineTotal = round($unitPrice * $qty, 2);
+
+                OrderItem::updateOrCreate(
+                    [
+                        'order_id' => $order->id,
+                        'product_id' => $productId,
+                        'variant_id' => $variantId,
+                    ],
+                    [
+                        'title' => $product->title ?? 'Item',
+                        'variant' => $product->variant_title ?? null,
+                        'image_url' => $product->img_src ?? '',
+                        'quantity' => $qty,
+                        'unit_price' => $unitPrice,
+                        'line_total' => $lineTotal,
+                        'actuals_date' => $deliveryDate,
+                        'meta' => [
+                            'source' => 'manual_today_request',
+                        ],
+                    ]
+                );
+            }
+
+            // ✅ If manual item added to already-delivered order,
+            // trigger agent_delivered_entered again so reconciliation can rerun.
+            if (($order->delivery_status ?? null) === 'delivered') {
+                $this->tryCreateAgentDeliveredEvent(
+                    (int) ($order->zone_id ?? $zoneId),
+                    (int) $subscriptionTypeId,
+                    Carbon::parse($order->delivery_date ?? $deliveryDate)->toDateString()
+                );
+            }
+
+            return response()->json([
+                'ok' => true,
+                'order_id' => (int) $order->id,
+                'message' => 'Manual today order created',
+            ]);
+        });
+    }
+
+    public function createManualNewCustomerOrder(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'phone' => 'required|string|max:20',
+            'nagar' => 'nullable|string|max:255',
+            'address' => 'nullable|string|max:500',
+            'subscription_type_id' => 'required|integer',
+            'delivery_date' => 'nullable|date',
+            'paid_amount' => 'nullable|numeric|min:0',
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|integer',
+            'items.*.variant_id' => 'nullable|integer',
+            'items.*.qty' => 'required|integer|min:1|max:999',
+        ]);
+
+        $user = $request->user();
+        $subscriptionTypeId = (int) $request->subscription_type_id;
+
+        $deliveryDate = $request->input('delivery_date')
+            ? Carbon::parse($request->delivery_date)->toDateString()
+            : Carbon::today()->toDateString();
+
+        $approvedService = $this->approvedDeliveryServiceForUser((int) $user->id, $subscriptionTypeId);
+
+        if (!$approvedService) {
+            return response()->json(['message' => 'Delivery service not approved'], 403);
+        }
+
+        $zoneId = (int) ($approvedService->zone_id ?? $user->zone_id ?? 0);
+        $paidAmount = round((float) ($request->paid_amount ?? 0), 2);
+
+        return DB::transaction(function () use ($request, $user, $zoneId, $deliveryDate, $paidAmount) {
+            $phone = preg_replace('/\D+/', '', (string) $request->phone);
+            if (strlen($phone) > 10 && str_starts_with($phone, '91')) {
+                $phone = substr($phone, -10);
+            }
+
+            $customer = \App\Models\User::query()->where('phone', $phone)->first();
+
+            if (!$customer) {
+                $customer = \App\Models\User::create([
+                    'name' => $request->name,
+                    'phone' => $phone,
+                    'zone_id' => $zoneId,
+                    'password' => bcrypt($phone),
+                ]);
+
+                if (method_exists($customer, 'assignRole')) {
+                    $customer->assignRole('customer');
+                }
+            }
+
+            $order = Order::create([
+                'customer_id' => $customer->id,
+                'zone_id' => $zoneId,
+                'order_type' => 'manual',
+                'status' => 'pending',
+                'delivery_date' => $deliveryDate,
+                'delivery_status' => 'pending',
+                'phone' => $phone,
+                'shipping_address' => [
+                    'name' => $request->name,
+                    'phone' => $phone,
+                    'nagar' => $request->nagar,
+                    'address' => $request->address,
+                ],
+                'shipping_address_json' => [
+                    'name' => $request->name,
+                    'phone' => $phone,
+                    'nagar' => $request->nagar,
+                    'address' => $request->address,
+                ],
+                'total_received' => $paidAmount,
+                'financial_status' => $paidAmount > 0 ? 'paid' : 'pending',
+                'display_financial_status' => $paidAmount > 0 ? 'Paid' : 'Pending',
+                'meta' => [
+                    'source' => 'manual_new_customer_today',
+                    'needs_subscription_setup' => true,
+                    'paid_amount' => $paidAmount,
+                    'created_by_user_id' => (int) $user->id,
+                ],
+            ]);
+
+            $subtotal = 0;
+
+            foreach ($request->items as $row) {
+                $productId = (int) $row['product_id'];
+                $variantId = !empty($row['variant_id']) ? (int) $row['variant_id'] : null;
+                $qty = (int) $row['qty'];
+
+                $product = DB::table('products as p')
+                    ->leftJoin('variants as v', 'v.variant_id', '=', DB::raw($variantId ?: '0'))
+                    ->where('p.product_id', $productId)
+                    ->select(
+                        'p.title',
+                        'p.img_src',
+                        'v.title as variant_title',
+                        'v.price'
+                    )
+                    ->first();
+
+                $unitPrice = is_numeric($product->price ?? null) ? (float) $product->price : 0;
+                $lineTotal = round($unitPrice * $qty, 2);
+                $subtotal += $lineTotal;
+
+                OrderItem::create([
+                    'order_id' => $order->id,
+                    'product_id' => $productId,
+                    'variant_id' => $variantId,
+                    'title' => $product->title ?? 'Item',
+                    'variant' => $product->variant_title ?? null,
+                    'image_url' => $product->img_src ?? '',
+                    'quantity' => $qty,
+                    'unit_price' => $unitPrice,
+                    'line_total' => $lineTotal,
+                    'actuals_date' => $deliveryDate,
+                    'meta' => [
+                        'source' => 'manual_new_customer_today',
+                    ],
+                ]);
+            }
+
+            $order->update([
+                'subtotal' => $subtotal,
+                'current_subtotal' => $subtotal,
+                'total' => $subtotal,
+                'current_total' => $subtotal,
+                'total_outstanding' => max($subtotal - $paidAmount, 0),
+            ]);
+
+            return response()->json([
+                'ok' => true,
+                'customer_id' => (int) $customer->id,
+                'order_id' => (int) $order->id,
+                'message' => 'New customer today order created',
+            ]);
+        });
+    }
+
     public function operatorCustomers(Request $request)
     {
         $user = $request->user();

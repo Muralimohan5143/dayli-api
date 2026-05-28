@@ -47,10 +47,6 @@ class SubscriptionChangeController extends Controller
             'items.*.end_date' => [
                 'nullable',
                 'date',
-                Rule::requiredIf(
-                    fn() =>
-                    collect(request('items'))->contains(fn($i) => ($i['action'] ?? null) === 'pause')
-                ),
             ],
 
             'items.*.price'            => 'nullable|numeric',
@@ -84,38 +80,57 @@ class SubscriptionChangeController extends Controller
                     }
 
                     // ✅ 1) Find latest row in this subscription chain (parent = latest row)
+                    $newStart = \Carbon\Carbon::parse($item['start_date'])->startOfDay();
+
                     $current = DraftOrderItem::query()
                         ->where('draft_order_id', $original->draft_order_id)
                         ->where('variant_id', $original->variant_id)
                         ->where(function ($q) use ($original) {
-                            // vendor_id NULL-safe
                             if (is_null($original->vendor_id)) {
                                 $q->whereNull('vendor_id');
                             } else {
                                 $q->where('vendor_id', $original->vendor_id);
                             }
                         })
+                        ->whereDate('start_date', '<=', $newStart->toDateString())
+                        ->whereIn('status', ['active', 'paused'])
+                        ->orderByDesc('start_date')
                         ->orderByDesc('id')
                         ->firstOrFail();
 
-                    // ✅ 2) Close previous row end_date = (new start_date - 1 day)
-                    $newStart = \Carbon\Carbon::parse($item['start_date'])->startOfDay();
-                    $prevEnd  = $newStart->copy()->subDay()->toDateString();
+                    $prevEnd = $newStart->copy()->subDay()->toDateString();
 
-                    $current->update([
-                        'end_date' => $prevEnd,
-                    ]);
+                    // // ✅ 2) Close previous row end_date = (new start_date - 1 day)
+                    // $newStart = \Carbon\Carbon::parse($item['start_date'])->startOfDay();
+                    // $prevEnd  = $newStart->copy()->subDay()->toDateString();
+
+                    $this->cancelFuturePlannedRows($current, $newStart->toDateString(), (int) $user->id);
+
+                    if (
+                        !$current->start_date ||
+                        \Carbon\Carbon::parse($current->start_date)->lte(\Carbon\Carbon::parse($prevEnd))
+                    ) {
+                        $current->update([
+                            'end_date' => $prevEnd,
+                            'closed_by_action' => $item['action'],
+                        ]);
+                    } else {
+                        $current->update([
+                            'status' => 'void',
+                            'closed_by_action' => 'superseded_by_new_change',
+                        ]);
+                    }
 
                     // ✅ 3) Create new row - sequential chain: original_item_id = current.id
-                    DraftOrderItem::create([
-                        'draft_order_id'   => $current->draft_order_id,
-                        'original_item_id' => $current->id,                 // ✅ IMPORTANT CHANGE
-                        'change_action'    => $item['action'],
-
+                    $newChangeRow = DraftOrderItem::create([
+                        'draft_order_id'      => $current->draft_order_id,
+                        'original_item_id'    => $current->id,
+                        'supersedes_doi_id'  => $current->id,
+                        'created_from_action' => $item['action'],
+                        'change_action'      => $item['action'],
                         'product_id'       => $current->product_id,
                         'variant_id'       => $current->variant_id,
                         'vendor_id'        => $current->vendor_id,
-
                         'qty'              => 0,
                         'unit'             => $item['unit'],
                         'frequency_type'   => null,
@@ -141,6 +156,42 @@ class SubscriptionChangeController extends Controller
                             'actor_role'       => $user->getRoleNames()->first(),
                         ],
                     ]);
+                    // ✅ If pause has end_date, auto create resume row from next day
+                    if (
+                        ($item['action'] ?? null) === 'pause'
+                        && !empty($item['end_date'])
+                    ) {
+                        $resumeStart = \Carbon\Carbon::parse($item['end_date'])
+                            ->addDay()
+                            ->toDateString();
+
+                        DraftOrderItem::create([
+                            'draft_order_id'      => $current->draft_order_id,
+                            'original_item_id'    => $newChangeRow->id,
+                            'supersedes_doi_id'  => $newChangeRow->id,
+                            'created_from_action' => 'auto_resume_after_pause',
+                            'change_action'      => 'resume',
+                            'product_id'       => $current->product_id,
+                            'variant_id'       => $current->variant_id,
+                            'vendor_id'        => $current->vendor_id,
+
+                            'qty'              => $original->qty,
+                            'unit'             => $original->unit,
+                            'frequency_type'   => $original->frequency_type,
+
+                            'price_snapshot'   => $original->price_snapshot,
+                            'start_date'       => $resumeStart,
+                            'end_date'         => null,
+                            'status'           => 'active',
+
+                            'meta' => [
+                                'source'       => !empty($validated['customer_id']) ? 'operator_auto_resume_after_pause' : 'auto_resume_after_pause',
+                                'for_user_id'  => $targetUserId,
+                                'by_user_id'   => $user->id,
+                                'pause_row_id' => $newChangeRow->id,
+                            ],
+                        ]);
+                    }
                 }
 
                 return response()->json([
@@ -176,5 +227,27 @@ class SubscriptionChangeController extends Controller
         }
 
         return (int) $authUser->id;
+    }
+
+    private function cancelFuturePlannedRows(DraftOrderItem $current, string $newStart, int $newActionByUserId): void
+    {
+        DraftOrderItem::query()
+            ->where('draft_order_id', $current->draft_order_id)
+            ->where('product_id', $current->product_id)
+            ->where('variant_id', $current->variant_id)
+            ->where(function ($q) use ($current) {
+                if (is_null($current->vendor_id)) {
+                    $q->whereNull('vendor_id');
+                } else {
+                    $q->where('vendor_id', $current->vendor_id);
+                }
+            })
+            ->whereDate('start_date', '>=', $newStart)
+            ->whereIn('status', ['active', 'paused'])
+            ->update([
+                'status' => 'void',
+                'closed_by_action' => 'superseded_by_new_change',
+                'updated_at' => now(),
+            ]);
     }
 }

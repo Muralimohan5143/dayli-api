@@ -372,23 +372,33 @@ class SubscriptionSelectionController extends Controller
             'end_date'       => ['nullable', 'date', 'after_or_equal:start_date'],
             'status'         => ['nullable', 'in:active,paused,cancelled'],
         ]);
+        $today = now()->toDateString();
+        $tomorrow = now()->addDay()->toDateString();
 
-        $item->qty            = $data['qty'];
-        $item->unit           = $data['unit'];
-        $item->frequency_type = $data['frequency_type'];
-        $item->start_date     = $data['start_date'] ?? null;
-        $item->end_date       = $data['end_date'] ?? null;
+        return DB::transaction(function () use ($item, $data, $today, $tomorrow) {
 
-        if (isset($data['status'])) {
-            $item->status = $data['status'];
-        }
+            // close old row
+            $item->end_date = $today;
+            $item->save();
 
-        $item->save();
+            // create new row with changed qty from tomorrow
+            $newItem = $item->replicate();
 
-        return response()->json([
-            'message' => 'Item updated',
-            'item'    => $item->fresh(),
-        ], 200);
+            $newItem->action_type     = 'modify';
+            $newItem->qty             = $data['qty'];
+            $newItem->unit            = $data['unit'];
+            $newItem->frequency_type  = $data['frequency_type'];
+            $newItem->start_date      = $tomorrow;
+            $newItem->end_date        = $data['end_date'] ?? null;
+            $newItem->status          = $data['status'] ?? 'active';
+
+            $newItem->save();
+
+            return response()->json([
+                'message' => 'Item updated',
+                'item'    => $newItem->fresh(),
+            ], 200);
+        });
     }
 
     private function ensureZoneIdForUser(User $user): ?int
@@ -431,5 +441,4 @@ class SubscriptionSelectionController extends Controller
 
         return (int) $authUser->id;
     }
-    
 }
