@@ -103,16 +103,19 @@ class OutboxReportController extends Controller
                 ->count();
             $subtotal = round((float) $items->sum('total_amount'), 2);
 
-            $deliveryDays = DB::table('order_items as oi')
-                ->join('orders as o', 'o.id', '=', 'oi.order_id')
-                ->where('o.customer_id', $customerId)
-                ->whereBetween('oi.actuals_date', [$start, $end])
-                ->distinct('oi.actuals_date')
-                ->count('oi.actuals_date');
+            $deliveryFee = 0.0;
 
-            $deliveryFeePerDay = 2; // or your config
+            foreach ($items as $it) {
+                $deliveryCount = (int) round((float) $it->total_qty);
 
-            $deliveryFee = $deliveryDays * $deliveryFeePerDay;
+                $deliveryFee += $this->computeDeliveryFee(
+                    $deliveryCount,
+                    isset($it->product_id) ? (int) $it->product_id : null,
+                    isset($it->variant_id) ? (int) $it->variant_id : null,
+                    (int) $customerId
+                );
+            }
+
             $grandTotal = round($subtotal + $deliveryFee, 2);
 
             return [
@@ -143,6 +146,83 @@ class OutboxReportController extends Controller
             ]),
             'customers' => $grouped,
         ]);
+    }
+
+    private function computeDeliveryFee(
+        int $deliveryCount,
+        ?int $productId,
+        ?int $variantId,
+        ?int $customerId
+    ): float {
+        $rule = $this->findDeliveryFeeRule($productId, $variantId, $customerId);
+
+        if (!$rule || empty($rule->fee_formula)) {
+            return 0.0;
+        }
+
+        return $this->evaluateFeeFormula((string) $rule->fee_formula, [
+            'qty' => max($deliveryCount, 0),
+        ]);
+    }
+
+    private function findDeliveryFeeRule(?int $productId, ?int $variantId, ?int $customerId): ?object
+    {
+        if (!$productId) {
+            return null;
+        }
+
+        return DB::table('delivery_fee_rules')
+            ->where('is_active', 1)
+            ->where('product_id', $productId)
+            ->where(function ($q) use ($variantId) {
+                if ($variantId) {
+                    $q->where('variant_id', $variantId)
+                        ->orWhereNull('variant_id');
+                } else {
+                    $q->whereNull('variant_id');
+                }
+            })
+            ->where(function ($q) use ($customerId) {
+                if ($customerId) {
+                    $q->where('customer_id', $customerId)
+                        ->orWhereNull('customer_id');
+                } else {
+                    $q->whereNull('customer_id');
+                }
+            })
+            ->orderByRaw("
+            CASE
+                WHEN customer_id IS NOT NULL AND variant_id IS NOT NULL THEN 4
+                WHEN customer_id IS NOT NULL AND variant_id IS NULL THEN 3
+                WHEN customer_id IS NULL AND variant_id IS NOT NULL THEN 2
+                ELSE 1
+            END DESC
+        ")
+            ->orderByDesc('priority')
+            ->first();
+    }
+
+    private function evaluateFeeFormula(string $formula, array $context): float
+    {
+        $qty = (float) ($context['qty'] ?? 0);
+
+        $normalized = preg_replace('/\s+/', '', strtolower($formula));
+
+        if (preg_match('/[^0-9qtyfloor\+\-\*\/\(\)\?\:\<\>\=\!\.\s]/', $normalized)) {
+            throw new \RuntimeException('Unsafe fee formula detected.');
+        }
+
+        $expr = str_ireplace('qty', '$qty', $formula);
+
+        try {
+            $result = (function () use ($expr, $qty) {
+                return eval('return ' . $expr . ';');
+            })();
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('Fee formula evaluation failed: ' . $e->getMessage(), 0, $e);
+        }
+
+        return round((float) $result, 2);
     }
 
     public function generate(Request $request, int $id, InvoiceGeneratorService $service)

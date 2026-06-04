@@ -185,6 +185,8 @@ flutter run -d 10BE5504BE0007E --dart-define=API_BASE=https://api.dayli.in/api
 # to copy build web from local to server
 From now correct flow
 Local:
+flutter build apk --release --dart-define=API_BASE=https://api.dayli.in/api 
+
 flutter build web --release --dart-define=API_BASE=https://api.dayli.in/api
 Upload:
 scp -r .\build\web deploy@15.207.182.13:/var/www/dayli-admin-web/repo/build/

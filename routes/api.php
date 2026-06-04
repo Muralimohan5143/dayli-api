@@ -22,6 +22,8 @@ use App\Http\Controllers\SesWebhookController;
 use App\Http\Controllers\Api\DeviceTokenController;
 use App\Http\Controllers\Api\OutboxReportController;
 use App\Http\Controllers\Api\NoOrderDeliveryController;
+use App\Http\Controllers\Api\MobileHomeController;
+use App\Http\Controllers\Api\MobileCategoryController;
 use App\Services\FcmService;
 
 /*
@@ -59,6 +61,9 @@ Route::get('/check-location', [MobileController::class, 'checkLocation']);
 
 // ✅ Zone resolve must be PUBLIC (needed during login/signup before token)
 Route::get('/zone/resolve', [ZoneApiController::class, 'resolveFromLatLng']);
+
+Route::get('/mobile/home', [MobileHomeController::class, 'index']);
+Route::get('/mobile/category', [MobileCategoryController::class, 'index']);
 
 Route::post('/no-order-delivery/send', [NoOrderDeliveryController::class, 'send']);
 Route::get('/no-order-delivery/options', [NoOrderDeliveryController::class, 'options']);
@@ -242,3 +247,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/admin/user-services/{userServiceId}/approve', [UserServiceController::class, 'approve']);
     Route::post('/admin/user-services/{userServiceId}/reject', [UserServiceController::class, 'reject']);
 });
+
+
+// Route::get('/mobile/home', [MobileHomeController::class, 'index']);
+// Route::get('/mobile/category', [MobileCategoryController::class, 'index']);
