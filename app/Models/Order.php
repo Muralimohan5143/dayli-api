@@ -11,33 +11,95 @@ class Order extends Model
     protected $table = 'orders';
 
     protected $fillable = [
+        'shopify_id',
+        'order_type',
+        'shopify_order_gid',
+        'shopify_legacy_id',
+        'order_number',
+        'shopify_name',
+        'name',
+        'confirmation_number',
+
         'customer_id',
         'vendor_id',
         'zone_id',
         'draft_order_id',
+
         'number',
         'status',
-        'subtotal',
-        'tax',
-        'discount',
-        'total',
-        'meta',
+        'confirmed',
+        'closed',
+        'requires_shipping',
+        'taxes_included',
+        'tax_exempt',
+        'test',
+        'unpaid',
+
         'delivery_date',
         'delivery_status',
         'delivered_at',
         'delivered_by',
+
+        'financial_status',
+        'display_financial_status',
+        'fulfillment_status',
+        'display_fulfillment_status',
+
+        'email',
+        'phone',
+        'order_status_url',
+        'status_page_url',
+
+        'item_count',
+        'currency',
+        'currency_code',
+
+        'subtotal',
+        'tax',
+        'discount',
+        'total',
+
+        'current_subtotal',
+        'current_tax',
+        'current_discounts',
+        'current_shipping',
+        'current_total',
+
+        'shipping_address',
+        'shipping_address_json',
+        'billing_address_json',
+        'shipping_methods',
+        'discounts',
+        'tags',
+        'meta',
+        'source_name',
+        'note',
+
+        'created_at_shopify',
+        'processed_at_shopify',
+        'updated_at_shopify',
+        'cancelled_at_shopify',
+        'closed_at_shopify',
     ];
 
     protected $casts = [
-        'subtotal'   => 'decimal:2',
-        'tax'        => 'decimal:2',
-        'discount'   => 'decimal:2',
-        'total'      => 'decimal:2',
-        'meta'       => 'array',
+        'subtotal' => 'decimal:2',
+        'tax' => 'decimal:2',
+        'discount' => 'decimal:2',
+        'total' => 'decimal:2',
+
+        'tags' => 'array',
+        'shipping_address' => 'array',
+        'shipping_address_json' => 'array',
+        'billing_address_json' => 'array',
+        'shipping_methods' => 'array',
+        'discounts' => 'array',
+        'meta' => 'array',
+
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'delivery_date' => 'date',
-        'delivered_at'  => 'datetime',
+        'delivered_at' => 'datetime',
     ];
 
     /**

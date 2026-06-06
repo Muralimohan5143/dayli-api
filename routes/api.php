@@ -24,6 +24,8 @@ use App\Http\Controllers\Api\OutboxReportController;
 use App\Http\Controllers\Api\NoOrderDeliveryController;
 use App\Http\Controllers\Api\MobileHomeController;
 use App\Http\Controllers\Api\MobileCategoryController;
+use App\Http\Controllers\Api\ShopifyCartController;
+use App\Http\Controllers\Api\ShopifyWebhookController;
 use App\Services\FcmService;
 
 /*
@@ -64,6 +66,15 @@ Route::get('/zone/resolve', [ZoneApiController::class, 'resolveFromLatLng']);
 
 Route::get('/mobile/home', [MobileHomeController::class, 'index']);
 Route::get('/mobile/category', [MobileCategoryController::class, 'index']);
+
+Route::post('/mobile/shopify/cart/create', [ShopifyCartController::class, 'create']);
+Route::post('/mobile/cart/add', [ShopifyCartController::class, 'add']);
+Route::get('/mobile/cart', [ShopifyCartController::class, 'show']);
+Route::post('/mobile/cart/update-qty', [ShopifyCartController::class, 'updateQty']);
+Route::post('/mobile/cart/remove', [ShopifyCartController::class, 'remove']);
+Route::post('/mobile/cart/checkout', [ShopifyCartController::class, 'checkout']);
+
+Route::post('/webhooks/shopify/orders-create', [ShopifyWebhookController::class, 'ordersCreate']);
 
 Route::post('/no-order-delivery/send', [NoOrderDeliveryController::class, 'send']);
 Route::get('/no-order-delivery/options', [NoOrderDeliveryController::class, 'options']);

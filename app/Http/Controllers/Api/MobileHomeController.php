@@ -111,6 +111,12 @@ class MobileHomeController extends Controller
                 return [
                     'product_id' => $row->product_id,
                     'variant_id' => $row->variant_id,
+
+                    'shopify_product_gid' =>
+                    'gid://shopify/Product/' . $row->product_id,
+
+                    'shopify_variant_gid' =>
+                    'gid://shopify/ProductVariant/' . $row->variant_id,
                     'name' => $row->title,
                     'variant' => $row->variant_title,
                     'category' => $row->product_type,

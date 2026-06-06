@@ -54,6 +54,7 @@ return [
     'shopify_dayli' => [
         'store_domain' => env('SHOPIFY_DAYLI_STORE_DOMAIN'),
         'access_token' => env('SHOPIFY_DAYLI_ACCESS_TOKEN'),
+        'storefront_token' => env('SHOPIFY_DAYLI_STOREFRONT_TOKEN'),
         'api_version'  => env('SHOPIFY_DAYLI_API_VERSION', '2025-07'),
     ],
 

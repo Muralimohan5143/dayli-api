@@ -16,21 +16,14 @@ class MyOrdersController extends Controller
         }
 
         // 2️⃣ Shopify customer id is required (your current mapping)
-        if (! $user->shopify_customer_id) {
-            return response()->json([
-                'message' => 'User missing shopify_customer_id. Sync / mapping required.',
-            ], 422);
-        }
+        $userId = (int) $user->id;
 
-        $shopifyId = (int) $user->shopify_customer_id;
-
-        // Optional: allow filtering by status from API (Flutter currently filters locally, but this helps later)
-        $status = $request->query('status'); // pending|confirmed|fulfilled|cancelled
-
-        // 3️⃣ Fetch orders where orders.customer_id = Shopify customer id
         $q = DB::table('orders')
-            ->where('customer_id', $shopifyId)
+            ->where('customer_id', $userId)
+            ->where('order_type', 'shopify')
             ->orderBy('created_at', 'desc');
+
+        $status = $request->query('status');
 
         if ($status) {
             $q->where('status', $status);
