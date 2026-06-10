@@ -24,6 +24,14 @@ use App\Http\Controllers\Api\OutboxReportController;
 use App\Http\Controllers\Api\NoOrderDeliveryController;
 use App\Http\Controllers\Api\MobileHomeController;
 use App\Http\Controllers\Api\MobileCategoryController;
+use App\Http\Controllers\Api\MobileMyDayController;
+use App\Http\Controllers\Api\MyDayNoteController;
+use App\Http\Controllers\Api\MyDayTodoController;
+use App\Http\Controllers\Api\MyDayRoutineController;
+use App\Http\Controllers\Api\MyDayLikeController;
+
+
+
 use App\Http\Controllers\Api\ShopifyCartController;
 use App\Http\Controllers\Api\ShopifyWebhookController;
 use App\Services\FcmService;
@@ -66,6 +74,16 @@ Route::get('/zone/resolve', [ZoneApiController::class, 'resolveFromLatLng']);
 
 Route::get('/mobile/home', [MobileHomeController::class, 'index']);
 Route::get('/mobile/category', [MobileCategoryController::class, 'index']);
+
+
+
+
+
+
+
+
+
+
 
 Route::post('/mobile/shopify/cart/create', [ShopifyCartController::class, 'create']);
 Route::post('/mobile/cart/add', [ShopifyCartController::class, 'add']);
@@ -250,6 +268,32 @@ Route::middleware('auth:sanctum')->group(function () {
 
         return response()->json(['ok' => true, 'fcm' => $res]);
     });
+
+    Route::get('/mobile/my-day', [MobileMyDayController::class, 'index']);
+
+    Route::get('/mobile/my-day/notes', [MyDayNoteController::class, 'index']);
+    Route::post('/mobile/my-day/notes', [MyDayNoteController::class, 'store']);
+    Route::put('/mobile/my-day/notes/{id}', [MyDayNoteController::class, 'update']);
+    Route::delete('/mobile/my-day/notes/{id}', [MyDayNoteController::class, 'destroy']);
+
+    Route::get('/mobile/my-day/todos', [MyDayTodoController::class, 'index']);
+    Route::post('/mobile/my-day/todos', [MyDayTodoController::class, 'store']);
+    Route::put('/mobile/my-day/todos/{id}', [MyDayTodoController::class, 'update']);
+    Route::post('/mobile/my-day/todos/{id}/complete', [MyDayTodoController::class, 'complete']);
+    Route::post('/mobile/my-day/todos/{id}/reopen', [MyDayTodoController::class, 'reopen']);
+    Route::delete('/mobile/my-day/todos/{id}', [MyDayTodoController::class, 'destroy']);
+
+    Route::get('/mobile/my-day/routines', [MyDayRoutineController::class, 'index']);
+    Route::post('/mobile/my-day/routines', [MyDayRoutineController::class, 'store']);
+    Route::put('/mobile/my-day/routines/{id}', [MyDayRoutineController::class, 'update']);
+    Route::post('/mobile/my-day/routines/{id}/complete', [MyDayRoutineController::class, 'complete']);
+    Route::post('/mobile/my-day/routines/{id}/skip', [MyDayRoutineController::class, 'skip']);
+    Route::post('/mobile/my-day/routines/{id}/reopen', [MyDayRoutineController::class, 'reopen']);
+    Route::delete('/mobile/my-day/routines/{id}', [MyDayRoutineController::class, 'destroy']);
+
+    Route::get('/mobile/my-day/likes/options', [MyDayLikeController::class, 'options']);
+    Route::get('/mobile/my-day/likes', [MyDayLikeController::class, 'index']);
+    Route::post('/mobile/my-day/likes', [MyDayLikeController::class, 'save']);
 });
 
 Route::middleware(['auth:sanctum'])->group(function () {

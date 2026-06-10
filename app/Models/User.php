@@ -12,6 +12,10 @@ use App\Models\Address;
 use App\Models\Zone;
 use App\Models\SubChangeRequest;
 use App\Models\SubscriptionType;
+use App\Models\MyDayLike;
+use App\Models\MyDayNote;
+use App\Models\MyDayTodo;
+use App\Models\MyDayRoutine;
 
 class User extends Authenticatable
 {
@@ -201,6 +205,26 @@ class User extends Authenticatable
             ->where('status', 'approved')
             ->where('is_active', true)
             ->exists();
+    }
+
+    public function myDayLikes()
+    {
+        return $this->hasMany(MyDayLike::class);
+    }
+
+    public function myDayNotes()
+    {
+        return $this->hasMany(MyDayNote::class);
+    }
+
+    public function myDayTodos()
+    {
+        return $this->hasMany(MyDayTodo::class);
+    }
+
+    public function myDayRoutines()
+    {
+        return $this->hasMany(MyDayRoutine::class);
     }
 
     public function getApprovedService(?string $roleName = null, ?string $serviceHandle = null)
