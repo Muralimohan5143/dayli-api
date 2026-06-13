@@ -29,12 +29,14 @@ use App\Http\Controllers\Api\MyDayNoteController;
 use App\Http\Controllers\Api\MyDayTodoController;
 use App\Http\Controllers\Api\MyDayRoutineController;
 use App\Http\Controllers\Api\MyDayLikeController;
+use App\Http\Controllers\Api\MobileMyDayVaultController;
 
 
 
 use App\Http\Controllers\Api\ShopifyCartController;
 use App\Http\Controllers\Api\ShopifyWebhookController;
 use App\Services\FcmService;
+use App\Services\MyDayFeedService;
 
 /*
 |--------------------------------------------------------------------------
@@ -270,6 +272,27 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     Route::get('/mobile/my-day', [MobileMyDayController::class, 'index']);
+
+    Route::get('/mobile/myday/vault', [MobileMyDayVaultController::class, 'show']);
+
+    Route::put('/mobile/myday/vault', [MobileMyDayVaultController::class, 'update']);
+
+    Route::post('/mobile/myday/vault/upload', [MobileMyDayVaultController::class, 'upload']);
+
+    Route::get('/mobile/myday/feed', function (MyDayFeedService $service) {
+
+        $keys = request(
+            'keys',
+            'weather,quote,gita,story,health,movies,music,news,cricket'
+        );
+
+        return response()->json([
+            'success' => true,
+            'items' => collect(explode(',', $keys))
+                ->map(fn($key) => $service->makeFeedItem(trim($key)))
+                ->values(),
+        ]);
+    });
 
     Route::get('/mobile/my-day/notes', [MyDayNoteController::class, 'index']);
     Route::post('/mobile/my-day/notes', [MyDayNoteController::class, 'store']);

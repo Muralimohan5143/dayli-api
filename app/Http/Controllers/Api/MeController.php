@@ -809,17 +809,32 @@ class MeController extends Controller
         $products = collect();
         if ($subtypeSlug !== '') {
             $products = DB::table('products as p')
-                ->leftJoin('variants as v', function ($join) {
-                    $join->on('v.product_id', '=', 'p.product_id')
-                        ->where('v.position', '=', 1);   // ✅ default variant
+                ->join('zone_product_variants as zpv', function ($join) {
+                    $join->on('zpv.product_id', '=', 'p.product_id')
+                        ->where('zpv.is_active', 1);
                 })
+                ->join('variants as v', 'v.variant_id', '=', 'zpv.variant_id')
                 ->where('p.product_sub_type', $subtypeSlug)
                 ->select(
                     'p.product_id',
-                    'p.title',
+                    DB::raw("
+CASE
+    WHEN v.title IS NULL
+         OR v.title = ''
+         OR v.title = 'Default Title'
+    THEN p.title
+
+    WHEN LOWER(v.title) = LOWER(p.title)
+    THEN p.title
+
+    ELSE v.title
+END as title
+"),
                     'p.img_src',
                     'p.product_sub_type',
+                    'v.variant_id',
                     'v.variant_id as default_variant_id',
+                    'v.title as variant_title',
                     'v.price as variant_price',
                     'v.sku as variant_sku'
                 )

@@ -167,6 +167,10 @@ Route::get('/', function () {
     return redirect('/login');
 })->name('default');
 
+Route::get('/downloadapp', function () {
+    return view('downloadapp');
+})->name('downloadapp');
+
 // Route::get('/vendor-signup', function () {
 //     $step = (int) request('step', 1);         // 1=signin, 2=contract, 3=profile
 //     $type = request('type', 'milk');          // milk | veg | ...
