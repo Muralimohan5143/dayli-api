@@ -64,7 +64,7 @@
             Order milk, groceries, pooja items and manage your daily needs from one app.
         </div>
         <a class="download-btn"
-            href="{{ asset('downloadapp/dayli-delivery-20260602.apk') }}"
+            href="{{ asset('dayliapp/com.omnea.dayli.apk') }}"
             download>
             Download App
         </a>
