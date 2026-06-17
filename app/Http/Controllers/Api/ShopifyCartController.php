@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\ShopifyCart;
 use App\Models\ShopifyCartLine;
+use App\Models\Order;
+use App\Models\OrderItem;
 use App\Services\ShopifyCartService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -213,6 +215,33 @@ class ShopifyCartController extends Controller
             'local_cart_id' => $cart->id,
             'cart_id' => $shopifyCart['id'] ?? null,
             'checkout_url' => $shopifyCart['checkoutUrl'] ?? null,
+        ]);
+    }
+    public function latestShopifyOrder(Request $request)
+    {
+        $userId = $this->userId($request);
+
+        $order = Order::where('customer_id', $userId)
+            ->where('order_type', 'shopify')
+            ->latest('id')
+            ->first();
+
+        if (!$order) {
+            return response()->json([
+                'success' => true,
+                'order' => null,
+                'items' => [],
+            ]);
+        }
+
+        $items = OrderItem::where('order_id', $order->id)
+            ->orderBy('id')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'order' => $order,
+            'items' => $items,
         ]);
     }
 }

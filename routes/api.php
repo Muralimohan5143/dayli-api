@@ -93,6 +93,7 @@ Route::get('/mobile/cart', [ShopifyCartController::class, 'show']);
 Route::post('/mobile/cart/update-qty', [ShopifyCartController::class, 'updateQty']);
 Route::post('/mobile/cart/remove', [ShopifyCartController::class, 'remove']);
 Route::post('/mobile/cart/checkout', [ShopifyCartController::class, 'checkout']);
+Route::get('/mobile/shopify-cart/latest-order', [ShopifyCartController::class, 'latestShopifyOrder']);
 
 Route::post('/webhooks/shopify/orders-create', [ShopifyWebhookController::class, 'ordersCreate']);
 

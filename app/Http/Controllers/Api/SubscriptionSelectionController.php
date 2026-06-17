@@ -384,7 +384,7 @@ class SubscriptionSelectionController extends Controller
             // create new row with changed qty from tomorrow
             $newItem = $item->replicate();
 
-            $newItem->action_type     = 'modify';
+            $newItem->change_action   = 'modify';
             $newItem->qty             = $data['qty'];
             $newItem->unit            = $data['unit'];
             $newItem->frequency_type  = $data['frequency_type'];

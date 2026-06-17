@@ -6,8 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\User;
+use App\Models\ShopifyCart;
+use App\Models\ShopifyCartLine;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ShopifyWebhookController extends Controller
 {
@@ -119,6 +122,27 @@ class ShopifyWebhookController extends Controller
                     'meta' => $item,
                 ]);
             }
+
+            $cartIds = ShopifyCart::where('user_id', $customer->id)
+                ->whereIn('status', ['active', 'checkout_started'])
+                ->pluck('id');
+
+            if ($cartIds->isNotEmpty()) {
+                ShopifyCartLine::whereIn('shopify_cart_id', $cartIds)->delete();
+
+                ShopifyCart::whereIn('id', $cartIds)->update([
+                    'status' => 'completed',
+                    'total_qty' => 0,
+                    'subtotal' => 0,
+                    'total' => 0,
+                ]);
+            }
+
+            Log::info('SHOPIFY ORDER CREATED AND CART CLEARED', [
+                'shopify_order_id' => $shopifyOrderId,
+                'customer_id' => $customer->id,
+                'cart_ids' => $cartIds->toArray(),
+            ]);
         });
 
         return response()->json(['success' => true]);

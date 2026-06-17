@@ -819,14 +819,12 @@ class MeController extends Controller
                     'p.product_id',
                     DB::raw("
 CASE
-    WHEN v.title IS NULL
-         OR v.title = ''
-         OR v.title = 'Default Title'
-    THEN p.title
-
+    WHEN v.title IS NULL OR v.title = '' OR v.title = 'Default Title'
+        THEN p.title
     WHEN LOWER(v.title) = LOWER(p.title)
-    THEN p.title
-
+        THEN p.title
+    WHEN LOWER(v.title) REGEXP '^[0-9]+ ?(ml|g|kg|l)$'
+        THEN CONCAT(p.title, ' ', v.title)
     ELSE v.title
 END as title
 "),
