@@ -30,6 +30,9 @@ use App\Http\Controllers\Api\MyDayTodoController;
 use App\Http\Controllers\Api\MyDayRoutineController;
 use App\Http\Controllers\Api\MyDayLikeController;
 use App\Http\Controllers\Api\MobileMyDayVaultController;
+use App\Http\Controllers\Api\FoodMenuController;
+use App\Http\Controllers\Api\FoodRegimenController;
+use App\Http\Controllers\Api\HomeFoodOrderController;
 
 
 
@@ -106,6 +109,12 @@ Route::get('/no-order-delivery/delivery-execs', [NoOrderDeliveryController::clas
 // ==============================
 // PROTECTED (Sanctum Bearer token)
 // ==============================
+
+// ================= HOME FOOD PUBLIC =================
+
+Route::get('/home-food/products/{mealType}', [FoodMenuController::class, 'getProductsByMealType']);
+Route::get('/home-food/menu/{productId}', [FoodMenuController::class, 'getChefMenus']);
+
 Route::middleware('auth:sanctum')->group(function () {
 
     // --------------------------
@@ -318,6 +327,27 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/mobile/my-day/likes/options', [MyDayLikeController::class, 'options']);
     Route::get('/mobile/my-day/likes', [MyDayLikeController::class, 'index']);
     Route::post('/mobile/my-day/likes', [MyDayLikeController::class, 'save']);
+
+    // ----------------------------------
+    // Home-made Food
+    // ----------------------------------
+    Route::apiResource('food-menus', FoodMenuController::class);
+
+    Route::apiResource('food-regimens', FoodRegimenController::class);
+
+    Route::post(
+        '/home-food/orders',
+        [HomeFoodOrderController::class, 'store']
+    );
+    Route::get('/home-food/chef/orders', [HomeFoodOrderController::class, 'chefOrders']);
+
+    // ================== HOME FOOD ==================
+
+    Route::post('/chef/food-menus', [FoodMenuController::class, 'store']);
+    Route::get('/chef/food-menus', [FoodMenuController::class, 'index']);
+    Route::get('/chef/food-menus/{id}', [FoodMenuController::class, 'show']);
+    Route::put('/chef/food-menus/{id}', [FoodMenuController::class, 'update']);
+    Route::delete('/chef/food-menus/{id}', [FoodMenuController::class, 'destroy']);
 });
 
 Route::middleware(['auth:sanctum'])->group(function () {
