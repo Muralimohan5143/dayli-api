@@ -74,17 +74,36 @@ class MobileHomeController extends Controller
                 ['title' => 'Groceries', 'type' => 'Groceries'],
                 ['title' => 'Pooja', 'type' => 'Puja Samagri'],
                 ['title' => 'Flowers', 'type' => 'Flowers'],
-                ['title' => 'Services', 'type' => 'Services'],
+
+                ['title' => 'Bakery', 'type' => 'Bakery & Snacks'],
+                ['title' => 'Beverages', 'type' => 'Beverages'],
+                ['title' => 'Sweets', 'type' => 'Sweets & Confectionery'],
+                ['title' => 'Snacks', 'type' => 'Chaats & Quick Snacks'],
+                ['title' => 'Fish', 'type' => 'Fish & Seafood'],
+                ['title' => 'Poultry', 'type' => 'Poultry'],
+                ['title' => 'Meat', 'type' => 'Meat'],
+                ['title' => 'Home Food', 'type' => 'Home Food'],
             ],
 
             'sections' => [
                 'today_deals' => $this->productsByType(clone $base, null, 12),
+
                 'milk_subscription' => $this->productsByType(clone $base, 'Milk & Dairy', 100),
                 'fresh_vegetables' => $this->productsByType(clone $base, 'Vegetables', 100),
                 'fruits' => $this->productsByType(clone $base, 'Fruits', 100),
                 'grocery_essentials' => $this->productsByType(clone $base, 'Groceries', 100),
                 'pooja_essentials' => $this->productsByType(clone $base, 'Puja Samagri', 100),
                 'flowers' => $this->productsByType(clone $base, 'Flowers', 100),
+
+                // NEW CATEGORIES
+                'bakery_snacks' => $this->productsByType(clone $base, 'Bakery & Snacks', 100),
+                'beverages' => $this->productsByType(clone $base, 'Beverages', 100),
+                'sweets_confectionery' => $this->productsByType(clone $base, 'Sweets & Confectionery', 100),
+                'chaats_quick_snacks' => $this->productsByType(clone $base, 'Chaats & Quick Snacks', 100),
+                'fish_seafood' => $this->productsByType(clone $base, 'Fish & Seafood', 100),
+                'poultry' => $this->productsByType(clone $base, 'Poultry', 100),
+                'meat' => $this->productsByType(clone $base, 'Meat', 100),
+                'home_food' => $this->productsByType(clone $base, 'Home Food', 100),
             ],
 
             'cart' => [
