@@ -127,6 +127,63 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/operator/customer-subscriptions', [SubscriptionsApiController::class, 'operatorCustomerSubscriptions']);
     Route::post('/profile/service', [ProfileController::class, 'saveServiceProfile']);
 
+    // =============================
+    // DAYLI SERVICES
+    // =============================
+
+    Route::get(
+        '/mobile/services/categories',
+        [MobileController::class, 'mobileServiceCategories']
+    );
+
+    Route::get(
+        '/mobile/services',
+        [MobileController::class, 'mobileServicesByCategory']
+    );
+
+    Route::get(
+        '/mobile/services/{serviceId}/variants',
+        [MobileController::class, 'mobileServiceVariants']
+    );
+
+    Route::get(
+        '/mobile/my/services',
+        [MobileController::class, 'getMyProviderServices']
+    );
+
+    Route::post(
+        '/mobile/my/services/add',
+        [MobileController::class, 'addMyProviderService']
+    );
+
+    Route::get(
+        '/mobile/my/service-requests',
+        [MobileController::class, 'getMyProviderServiceRequests']
+    );
+
+    // AI Service Request Flow
+
+
+    Route::post('/mobile/service-requests/create', [MobileController::class, 'createMobileServiceRequest']);
+
+    Route::get('/mobile/my/service-requests', [MobileController::class, 'getMyProviderServiceRequests']);
+
+    Route::post('/mobile/service-requests/{requestId}/respond', [MobileController::class, 'submitServiceRequestResponse']);
+
+    Route::get('/mobile/service-requests/{requestId}/feed', [MobileController::class, 'getServiceRequestFeed']);
+
+    Route::post('/mobile/service-requests/{requestId}/select-providers', [MobileController::class, 'selectServiceRequestProviders']);
+
+    Route::get(
+        '/mobile/customer/service-requests',
+        [MobileController::class, 'getCustomerServiceRequests']
+    );
+
+    Route::get('/mobile/my/service-assignments', [MobileController::class, 'getMyServiceAssignments']);
+
+    Route::post('/mobile/service-assignments/{assignmentId}/status', [MobileController::class, 'updateServiceAssignmentStatus']);
+
+
     // --------------------------
     // User Services (User side)
     // --------------------------
