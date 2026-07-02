@@ -104,6 +104,7 @@ class MobileHomeController extends Controller
                 'poultry' => $this->productsByType(clone $base, 'Poultry', 100),
                 'meat' => $this->productsByType(clone $base, 'Meat', 100),
                 'home_food' => $this->productsByType(clone $base, 'Home Food', 100),
+                'medical' => $this->productsByType(clone $base, 'Medical', 100),
             ],
 
             'cart' => [

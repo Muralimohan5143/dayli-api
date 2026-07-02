@@ -81,7 +81,7 @@ class OtpAuthController extends Controller
 
         if (
             app()->environment(['local', 'testing'])  ||
-            now()->lt(Carbon::parse('2026-06-30'))
+            now()->lt(Carbon::parse('2026-07-31'))
         ) {
             $last10 = '9885734326';
         }
