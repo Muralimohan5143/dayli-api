@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\MobileMyDayVaultController;
 use App\Http\Controllers\Api\FoodMenuController;
 use App\Http\Controllers\Api\FoodRegimenController;
 use App\Http\Controllers\Api\HomeFoodOrderController;
+use App\Http\Controllers\Api\FoodMenuTodayController;
 
 
 
@@ -405,6 +406,24 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/chef/food-menus/{id}', [FoodMenuController::class, 'show']);
     Route::put('/chef/food-menus/{id}', [FoodMenuController::class, 'update']);
     Route::delete('/chef/food-menus/{id}', [FoodMenuController::class, 'destroy']);
+
+    // Today's Menu
+    Route::get('/chef/food-menu-catalogue', [FoodMenuTodayController::class, 'chefFoodMenus']);
+    Route::post('/chef/food-menu-today', [FoodMenuTodayController::class, 'store']);
+    Route::get('/chef/food-menu-today', [FoodMenuTodayController::class, 'index']);
+
+    Route::put('/chef/food-menu-today/{id}', [FoodMenuTodayController::class, 'update']);
+    Route::delete('/chef/food-menu-today/{id}', [FoodMenuTodayController::class, 'destroy']);
+
+    Route::post('/chef/food-menu-today/broadcast', [FoodMenuTodayController::class, 'broadcastAllToday']);
+    Route::post('/chef/food-menu-today/{id}/broadcast', [FoodMenuTodayController::class, 'broadcast']);
+
+    // Customer
+    Route::get('/food/today', [FoodMenuTodayController::class, 'customerTodayFood']);
+    Route::post('/food/preorder', [FoodMenuTodayController::class, 'preorder']);
+
+    // Chef Preorders
+    Route::get('/chef/food-preorders', [FoodMenuTodayController::class, 'preorders']);
 });
 
 Route::middleware(['auth:sanctum'])->group(function () {

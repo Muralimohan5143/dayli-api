@@ -368,10 +368,20 @@ class MobileController extends Controller
         $categories = Service::query()
             ->where('is_active', 1)
             ->whereNotNull('category')
-            ->select('category')
-            ->distinct()
-            ->orderBy('category')
             ->pluck('category')
+            ->map(function ($category) {
+                if (in_array($category, [
+                    'Home Improvement',
+                    'Housekeeping',
+                    'Household',
+                ])) {
+                    return 'Household';
+                }
+
+                return $category;
+            })
+            ->unique()
+            ->sort()
             ->values();
 
         return response()->json([
@@ -392,7 +402,18 @@ class MobileController extends Controller
             ->where('is_active', 1);
 
         if ($request->filled('category')) {
-            $query->where('category', $request->category);
+
+            if ($request->category === 'Household') {
+
+                $query->whereIn('category', [
+                    'Home Improvement',
+                    'Housekeeping',
+                    'Household',
+                ]);
+            } else {
+
+                $query->where('category', $request->category);
+            }
         }
 
         if ($request->filled('q')) {
