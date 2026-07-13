@@ -113,6 +113,8 @@ class FoodMenuTodayController extends Controller
         ]);
     }
 
+    
+
     public function customerTodayFood(Request $request)
     {
         $validated = $request->validate([

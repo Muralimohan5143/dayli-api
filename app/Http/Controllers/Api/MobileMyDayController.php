@@ -8,16 +8,23 @@ use App\Models\MyDayLike;
 use App\Models\MyDayNote;
 use App\Models\MyDayRoutine;
 use App\Models\MyDayTodo;
+use App\Services\MyDayImageService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 
 class MobileMyDayController extends Controller
 {
+    public function __construct(
+        private readonly MyDayImageService $imageService,
+    ) {}
+
     public function index(Request $request)
     {
         $user = $request->user();
         $city = $request->query('city', 'Nandyal');
         $today = Carbon::now('Asia/Kolkata');
+
+        $greeting = $this->imageService->greetingImage($today);
 
         $likes = MyDayLike::where('user_id', $user->id)
             ->where('is_enabled', true)
@@ -64,6 +71,12 @@ class MobileMyDayController extends Controller
                     'date_text' => $today->format('l, j F Y'),
                 ],
 
+                'greeting' => [
+                    'period' => $greeting['period'],
+                    'image_path' => $greeting['image_path'],
+                    'image_url' => $greeting['image_url'],
+                ],
+
                 'likes' => $likes,
                 'feed_items' => $feedItems,
                 'notes' => $notes,
@@ -73,11 +86,17 @@ class MobileMyDayController extends Controller
                 'summary' => [
                     'likes_count' => $likes->count(),
                     'notes_count' => $notes->count(),
-                    'pending_todos_count' => $todos->where('status', 'pending')->count(),
+                    'pending_todos_count' => $todos
+                        ->where('status', 'pending')
+                        ->count(),
                     'routines_count' => $routines->count(),
-                    'completed_routines_today' => $routines->filter(function ($routine) {
-                        return $routine->logs->where('status', 'completed')->count() > 0;
-                    })->count(),
+                    'completed_routines_today' => $routines
+                        ->filter(function ($routine) {
+                            return $routine->logs
+                                ->where('status', 'completed')
+                                ->count() > 0;
+                        })
+                        ->count(),
                 ],
             ],
         ]);

@@ -6,9 +6,12 @@ use Illuminate\Support\Facades\Http;
 
 class MyDayFeedService
 {
+    public function __construct(
+        private readonly MyDayImageService $imageService,
+    ) {}
     public function makeFeedItem(string $key): array
     {
-        return match ($key) {
+        $item = match ($key) {
             'weather' => $this->getWeather(),
             'astro' => $this->getPanchang(),
             'quote' => $this->getQuote(),
@@ -27,12 +30,32 @@ class MyDayFeedService
             'fun_fact' => $this->getFunFact(),
             default => $this->fallback($key),
         };
+
+        $variant = null;
+
+        if ($key === 'weather') {
+            $variant = data_get(
+                $item,
+                'payload_json._image_variant',
+                'default',
+            );
+        }
+
+        $image = $this->imageService->feedImage(
+            key: $key,
+            variant: $variant,
+        );
+
+        return $item + [
+            'image_path' => $image['path'],
+            'image_url' => $image['url'],
+        ];
     }
 
     public function getWeather(): array
     {
         try {
-            $response = Http::timeout(8)->get('https://api.open-meteo.com/v1/forecast', [
+            $response = Http::connectTimeout(3)->timeout(5)->get('https://api.open-meteo.com/v1/forecast', [
                 'latitude' => 15.4777,
                 'longitude' => 78.4836,
                 'current' => 'temperature_2m,weather_code',
@@ -57,7 +80,9 @@ class MyDayFeedService
                 'title' => 'Today Weather',
                 'subtitle' => 'Nandyal',
                 'body' => "{$temp}°C • {$condition} | H: {$max}°C L: {$min}°C",
-                'payload_json' => $data,
+                'payload_json' => $data + [
+                    '_image_variant' => $condition,
+                ],
             ];
         } catch (\Throwable $e) {
             return $this->fallbackWeather();
@@ -79,7 +104,7 @@ class MyDayFeedService
         }
 
         try {
-            $tokenResponse = Http::asForm()->timeout(10)->post('https://api.prokerala.com/token', [
+            $tokenResponse = Http::asForm()->connectTimeout(3)->timeout(5)->post('https://api.prokerala.com/token', [
                 'grant_type' => 'client_credentials',
                 'client_id' => $clientId,
                 'client_secret' => $clientSecret,
@@ -105,7 +130,7 @@ class MyDayFeedService
                 ];
             }
 
-            $response = Http::withToken($token)->timeout(10)->get('https://api.prokerala.com/v2/astrology/panchang', [
+            $response = Http::withToken($token)->connectTimeout(3)->timeout(5)->get('https://api.prokerala.com/v2/astrology/panchang', [
                 'ayanamsa' => 1,
                 'coordinates' => env('MYDAY_COORDINATES', '15.4777,78.4836'),
                 'datetime' => now('Asia/Kolkata')->format('Y-m-d\TH:i:sP'),
@@ -169,7 +194,7 @@ class MyDayFeedService
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $apiKey,
             'Accept' => 'application/json',
-        ])->get('https://api.dailyquotes.dev/api/quote');
+        ])->connectTimeout(3)->timeout(5)->get('https://api.dailyquotes.dev/api/quote');
 
         if (!$response->successful()) {
             return [
@@ -232,7 +257,7 @@ class MyDayFeedService
         }
 
         try {
-            $response = Http::timeout(8)->get('https://api.themoviedb.org/3/movie/now_playing', [
+            $response = Http::connectTimeout(3)->timeout(5)->get('https://api.themoviedb.org/3/movie/now_playing', [
                 'api_key' => $apiKey,
                 'language' => 'en-IN',
                 'region' => 'IN',
@@ -300,7 +325,7 @@ class MyDayFeedService
         }
 
         try {
-            $response = Http::timeout(8)->get('https://ws.audioscrobbler.com/2.0/', [
+            $response = Http::connectTimeout(3)->timeout(5)->get('https://ws.audioscrobbler.com/2.0/', [
                 'method' => 'geo.gettoptracks',
                 'country' => 'India',
                 'api_key' => $apiKey,
@@ -368,7 +393,7 @@ class MyDayFeedService
             ];
         }
 
-        $response = Http::timeout(8)->get('https://gnews.io/api/v4/top-headlines', [
+        $response = Http::connectTimeout(3)->timeout(5)->get('https://gnews.io/api/v4/top-headlines', [
             'category' => 'general',
             'lang' => 'en',
             'country' => 'in',
@@ -426,7 +451,7 @@ class MyDayFeedService
         }
 
         try {
-            $response = Http::timeout(8)->get('https://api.cricapi.com/v1/currentMatches', [
+            $response = Http::connectTimeout(3)->timeout(5)->get('https://api.cricapi.com/v1/currentMatches', [
                 'apikey' => $apiKey,
                 'offset' => 0,
             ]);
@@ -529,7 +554,7 @@ class MyDayFeedService
         $apiKey = env('THEMEALDB_API_KEY', '1');
 
         try {
-            $response = Http::timeout(10)->get("https://www.themealdb.com/api/json/v1/{$apiKey}/random.php");
+            $response = Http::connectTimeout(3)->timeout(5)->get("https://www.themealdb.com/api/json/v1/{$apiKey}/random.php");
 
             if (!$response->successful()) {
                 return [
@@ -620,7 +645,7 @@ class MyDayFeedService
         }
 
         try {
-            $response = Http::timeout(10)->get('https://api.metals.dev/v1/latest', [
+            $response = Http::connectTimeout(3)->timeout(5)->get('https://api.metals.dev/v1/latest', [
                 'api_key' => $apiKey,
                 'currency' => 'INR',
                 'unit' => 'g',
@@ -716,7 +741,7 @@ class MyDayFeedService
                 'city' => $city,
                 'x-rapidapi-host' => $host,
                 'x-rapidapi-key' => $apiKey,
-            ])->timeout(10)->get("https://{$host}/{$endpoint}/");
+            ])->connectTimeout(3)->timeout(5)->get("https://{$host}/{$endpoint}/");
 
             if (!$response->successful()) {
                 return [
@@ -795,7 +820,9 @@ class MyDayFeedService
             'title' => 'Today Weather',
             'subtitle' => 'Nandyal',
             'body' => 'Weather update is temporarily unavailable.',
-            'payload_json' => null,
+            'payload_json' => [
+                '_image_variant' => 'default',
+            ],
         ];
     }
 

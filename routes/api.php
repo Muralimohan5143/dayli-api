@@ -349,16 +349,51 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/mobile/myday/feed', function (MyDayFeedService $service) {
 
-        $keys = request(
-            'keys',
-            'weather,quote,gita,story,health,movies,music,news,cricket'
-        );
+        $rawKeys = request('keys', 'gita,health,fun_fact');
+
+        $allowedKeys = [
+            'weather',
+            'astro',
+            'quote',
+            'gita',
+            'story',
+            'movies',
+            'music',
+            'news',
+            'cricket',
+            'gold',
+            'silver',
+            'petrol',
+            'diesel',
+            'health',
+            'recipe',
+            'fun_fact',
+        ];
+
+        $keys = collect(explode(',', $rawKeys))
+            ->map(fn($key) => trim((string) $key))
+            ->filter(fn($key) => $key !== '' && in_array($key, $allowedKeys, true))
+            ->unique()
+            ->take(5)
+            ->values();
+
+        $items = $keys->map(function ($key) use ($service) {
+            try {
+                return $service->makeFeedItem($key) + ['interest_key' => $key];
+            } catch (\Throwable $e) {
+                return [
+                    'interest_key' => $key,
+                    'title' => ucfirst(str_replace('_', ' ', $key)),
+                    'subtitle' => 'MyDay update',
+                    'body' => 'This update is temporarily unavailable.',
+                    'payload_json' => ['error' => $e->getMessage()],
+                ];
+            }
+        })->values();
 
         return response()->json([
             'success' => true,
-            'items' => collect(explode(',', $keys))
-                ->map(fn($key) => $service->makeFeedItem(trim($key)))
-                ->values(),
+            'items' => $items,
         ]);
     });
 

@@ -38,21 +38,21 @@ return [
         'avatars' => [
             'driver' => 'local',
             'root' => storage_path('app/public/avatars'),
-            'url' => env('APP_URL').'/avatars',
-            'visibility' => 'public',    
+            'url' => env('APP_URL') . '/avatars',
+            'visibility' => 'public',
         ],
 
         'items' => [
             'driver' => 'local',
             'root' => storage_path('app/public/items'),
-            'url' => env('APP_URL').'/items',
-            'visibility' => 'public',    
+            'url' => env('APP_URL') . '/items',
+            'visibility' => 'public',
         ],
 
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),
-            'url' => env('APP_URL').'/storage',
+            'url' => env('APP_URL') . '/storage',
             'visibility' => 'public',
         ],
 
@@ -78,10 +78,15 @@ return [
     | the locations of the links and the values should be their targets.
     |
     */
-
     'links' => [
+
+        // Standard Laravel storage link
+        public_path('storage') => storage_path('app/public'),
+
+        // Existing links
         public_path('avatars') => storage_path('app/public/avatars'),
         public_path('items') => storage_path('app/public/items'),
+
     ],
 
 ];
