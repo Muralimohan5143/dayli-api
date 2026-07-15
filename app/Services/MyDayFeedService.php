@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
+use Carbon\Carbon;
 
 class MyDayFeedService
 {
@@ -104,18 +105,21 @@ class MyDayFeedService
         }
 
         try {
-            $tokenResponse = Http::asForm()->connectTimeout(3)->timeout(5)->post('https://api.prokerala.com/token', [
-                'grant_type' => 'client_credentials',
-                'client_id' => $clientId,
-                'client_secret' => $clientSecret,
-            ]);
+            $tokenResponse = Http::asForm()
+                ->connectTimeout(3)
+                ->timeout(8)
+                ->post('https://api.prokerala.com/token', [
+                    'grant_type' => 'client_credentials',
+                    'client_id' => $clientId,
+                    'client_secret' => $clientSecret,
+                ]);
 
             if (!$tokenResponse->successful()) {
                 return [
                     'title' => 'Today Panchang',
                     'subtitle' => 'Astro update',
                     'body' => 'Panchang token request failed.',
-                    'payload_json' => $tokenResponse->json(),
+                    'payload_json' => null,
                 ];
             }
 
@@ -125,53 +129,342 @@ class MyDayFeedService
                 return [
                     'title' => 'Today Panchang',
                     'subtitle' => 'Astro update',
-                    'body' => 'Panchang access token not received.',
-                    'payload_json' => $tokenResponse->json(),
+                    'body' => 'Panchang access token was not received.',
+                    'payload_json' => null,
                 ];
             }
 
-            $response = Http::withToken($token)->connectTimeout(3)->timeout(5)->get('https://api.prokerala.com/v2/astrology/panchang', [
-                'ayanamsa' => 1,
-                'coordinates' => env('MYDAY_COORDINATES', '15.4777,78.4836'),
-                'datetime' => now('Asia/Kolkata')->format('Y-m-d\TH:i:sP'),
-            ]);
+            $response = Http::withToken($token)
+                ->connectTimeout(3)
+                ->timeout(10)
+                ->get('https://api.prokerala.com/v2/astrology/panchang', [
+                    'ayanamsa' => 1,
+                    'coordinates' => env(
+                        'MYDAY_COORDINATES',
+                        '15.4777,78.4836'
+                    ),
+                    'datetime' => now('Asia/Kolkata')
+                        ->format('Y-m-d\TH:i:sP'),
+                ]);
 
             if (!$response->successful()) {
                 return [
                     'title' => 'Today Panchang',
                     'subtitle' => 'Astro update',
                     'body' => 'Panchang update is temporarily unavailable.',
-                    'payload_json' => $response->json(),
+                    'payload_json' => null,
                 ];
             }
 
             $data = $response->json();
             $panchang = $data['data'] ?? $data;
 
-            $tithi = data_get($panchang, 'tithi.0.name') ?? data_get($panchang, 'tithi.name') ?? 'N/A';
-            $nakshatra = data_get($panchang, 'nakshatra.0.name') ?? data_get($panchang, 'nakshatra.name') ?? 'N/A';
-            $yoga = data_get($panchang, 'yoga.0.name') ?? data_get($panchang, 'yoga.name') ?? 'N/A';
-            $karana = data_get($panchang, 'karana.0.name') ?? data_get($panchang, 'karana.name') ?? 'N/A';
-
-            $lines = array_filter([
-                $tithi ? "Tithi: {$tithi}" : null,
-                $nakshatra ? "Nakshatra: {$nakshatra}" : null,
-                $yoga ? "Yoga: {$yoga}" : null,
-                $karana ? "Karana: {$karana}" : null,
+            logger()->info('PROKERALA PANCHANG RAW RESPONSE', [
+                'response' => $data,
             ]);
+
+            // $tithiItems = is_array($panchang['tithi'] ?? null)
+            //     ? $panchang['tithi']
+            //     : [];
+
+            // $nakshatraItems = is_array($panchang['nakshatra'] ?? null)
+            //     ? $panchang['nakshatra']
+            //     : [];
+
+            // $yogaItems = is_array($panchang['yoga'] ?? null)
+            //     ? $panchang['yoga']
+            //     : [];
+
+            // $karanaItems = is_array($panchang['karana'] ?? null)
+            //     ? $panchang['karana']
+            //     : [];
+
+            // $currentTithi = $this->activePanchangItem($tithiItems);
+            // $nextTithi = $this->nextPanchangItem($tithiItems, $currentTithi);
+
+            // $currentNakshatra = $this->activePanchangItem($nakshatraItems);
+            // $nextNakshatra = $this->nextPanchangItem(
+            //     $nakshatraItems,
+            //     $currentNakshatra
+            // );
+
+            // $currentYoga = $this->activePanchangItem($yogaItems);
+            // $nextYogaItem = $this->nextPanchangItem(
+            //     $yogaItems,
+            //     $currentYoga
+            // );
+
+            // $currentKarana = $this->activePanchangItem($karanaItems);
+            // $nextKaranaItem = $this->nextPanchangItem(
+            //     $karanaItems,
+            //     $currentKarana
+            // );
+
+            // $tithi = $currentTithi['name'] ?? 'N/A';
+            // $paksha = $currentTithi['paksha'] ?? null;
+
+            // $nakshatra = $currentNakshatra['name'] ?? 'N/A';
+
+            // $yoga = $currentYoga['name'] ?? 'N/A';
+
+            // $karana = $currentKarana['name'] ?? 'N/A';
+
+            // $weekday = $panchang['vaara'] ?? null;
+
+
+            //     $sunrise = $this->formatPanchangTime(
+            //         data_get($panchang, 'sunrise')
+            //     );
+
+            //     $sunset = $this->formatPanchangTime(
+            //         data_get($panchang, 'sunset')
+            //     );
+
+            //     $moonrise = $this->formatPanchangTime(
+            //         data_get($panchang, 'moonrise')
+            //     );
+
+            //     $moonset = $this->formatPanchangTime(
+            //         data_get($panchang, 'moonset')
+            //     );
+
+            //     /*
+            //  * Paksha and rashi
+            //  */
+            //     $paksha = $this->firstPanchangValue($panchang, [
+            //         'paksha.name',
+            //         'paksha',
+            //         'tithi.0.paksha',
+            //     ]);
+
+            //     $rashi = $this->firstPanchangValue($panchang, [
+            //         'rashi.name',
+            //         'rashi',
+            //         'moon_sign.name',
+            //         'moon_sign',
+            //     ]);
+
+            //     $weekday = $this->firstPanchangValue($panchang, [
+            //         'weekday',
+            //         'weekday.name',
+            //         'vaara',
+            //         'vaara.name',
+            //     ]);
+
+            //     $amantaMonth = $this->firstPanchangValue($panchang, [
+            //         'amanta_month.name',
+            //         'amanta_month',
+            //         'lunar_month.amanta.name',
+            //     ]);
+
+            //     $purnimantaMonth = $this->firstPanchangValue($panchang, [
+            //         'purnimanta_month.name',
+            //         'purnimanta_month',
+            //         'lunar_month.purnimanta.name',
+            //     ]);
+
+            //     $sunSign = $this->firstPanchangValue($panchang, [
+            //         'sun_sign.name',
+            //         'sun_sign',
+            //         'solar_sign.name',
+            //         'solar_sign',
+            //     ]);
+
+            //     $pravishte = $this->firstPanchangValue($panchang, [
+            //         'pravishte',
+            //         'gate',
+            //         'pravishte_gate',
+            //     ]);
+
+            //     $shakaSamvat = $this->firstPanchangValue($panchang, [
+            //         'shaka_samvat',
+            //         'samvat.shaka',
+            //     ]);
+
+            //     $vikramSamvat = $this->firstPanchangValue($panchang, [
+            //         'vikram_samvat',
+            //         'samvat.vikram',
+            //     ]);
+
+            //     $gujaratiSamvat = $this->firstPanchangValue($panchang, [
+            //         'gujarati_samvat',
+            //         'samvat.gujarati',
+            //     ]);
+
+            /*
+ * Actual Prokerala Panchang response values.
+ */
+            $tithiItems = is_array($panchang['tithi'] ?? null)
+                ? $panchang['tithi']
+                : [];
+
+            $nakshatraItems = is_array($panchang['nakshatra'] ?? null)
+                ? $panchang['nakshatra']
+                : [];
+
+            $yogaItems = is_array($panchang['yoga'] ?? null)
+                ? $panchang['yoga']
+                : [];
+
+            $karanaItems = is_array($panchang['karana'] ?? null)
+                ? $panchang['karana']
+                : [];
+
+            $currentTithi = $this->activePanchangItem($tithiItems);
+            $nextTithi = $this->nextPanchangItem(
+                $tithiItems,
+                $currentTithi,
+            );
+
+            $currentNakshatra = $this->activePanchangItem($nakshatraItems);
+            $nextNakshatra = $this->nextPanchangItem(
+                $nakshatraItems,
+                $currentNakshatra,
+            );
+
+            $currentYoga = $this->activePanchangItem($yogaItems);
+            $nextYogaItem = $this->nextPanchangItem(
+                $yogaItems,
+                $currentYoga,
+            );
+
+            $currentKarana = $this->activePanchangItem($karanaItems);
+            $nextKaranaItem = $this->nextPanchangItem(
+                $karanaItems,
+                $currentKarana,
+            );
+
+            $tithi = $currentTithi['name'] ?? 'N/A';
+            $paksha = $currentTithi['paksha'] ?? null;
+
+            $nakshatra = $currentNakshatra['name'] ?? 'N/A';
+
+            $yoga = $currentYoga['name'] ?? 'N/A';
+
+            $karana = $currentKarana['name'] ?? 'N/A';
+
+            $weekday = $panchang['vaara'] ?? null;
+
+            $sunrise = $this->formatPanchangTime(
+                $panchang['sunrise'] ?? null
+            );
+
+            $sunset = $this->formatPanchangTime(
+                $panchang['sunset'] ?? null
+            );
+
+            $moonrise = $this->formatPanchangTime(
+                $panchang['moonrise'] ?? null
+            );
+
+            $moonset = $this->formatPanchangTime(
+                $panchang['moonset'] ?? null
+            );
+
+
+            /*
+         * Short preview shown on main feed card.
+         */
+            $body = implode("\n", array_filter([
+                "Tithi: {$tithi}",
+                "Nakshatra: {$nakshatra}",
+                "Yoga: {$yoga}",
+                "Karana: {$karana}",
+            ]));
+
+            /*
+         * Clean structured data for Flutter modal.
+         */
+            $payload = array_filter([
+                'date' => now('Asia/Kolkata')->format('l, d F Y'),
+                'location' => 'Nandyal',
+
+                'sunrise' => $sunrise,
+                'sunset' => $sunset,
+                'moonrise' => $moonrise,
+                'moonset' => $moonset,
+
+                'weekday' => $weekday,
+
+                'tithi' => $tithi,
+                'tithi_start' => $this->formatPanchangTime(
+                    $currentTithi['start'] ?? null
+                ),
+                'tithi_end' => $this->formatPanchangTime(
+                    $currentTithi['end'] ?? null
+                ),
+
+                'next_tithi' => $nextTithi['name'] ?? null,
+                'next_tithi_end' => $this->formatPanchangTime(
+                    $nextTithi['end'] ?? null
+                ),
+                'paksha' => $paksha,
+
+
+                'nakshatra' => $nakshatra,
+                'nakshatra_start' => $this->formatPanchangTime(
+                    $currentNakshatra['start'] ?? null
+                ),
+                'nakshatra_end' => $this->formatPanchangTime(
+                    $currentNakshatra['end'] ?? null
+                ),
+
+                'next_nakshatra' => $nextNakshatra['name'] ?? null,
+                'next_nakshatra_end' => $this->formatPanchangTime(
+                    $nextNakshatra['end'] ?? null
+                ),
+
+                'nakshatra_lord' =>
+                $currentNakshatra['lord']['name'] ?? null,
+
+                'nakshatra_lord_vedic_name' =>
+                $currentNakshatra['lord']['vedic_name'] ?? null,
+
+                'yoga' => $yoga,
+                'yoga_start' => $this->formatPanchangTime(
+                    $currentYoga['start'] ?? null
+                ),
+                'yoga_end' => $this->formatPanchangTime(
+                    $currentYoga['end'] ?? null
+                ),
+
+                'next_yoga' => $nextYogaItem['name'] ?? null,
+                'next_yoga_end' => $this->formatPanchangTime(
+                    $nextYogaItem['end'] ?? null
+                ),
+
+                'karana' => $karana,
+                'karana_start' => $this->formatPanchangTime(
+                    $currentKarana['start'] ?? null
+                ),
+                'karana_end' => $this->formatPanchangTime(
+                    $currentKarana['end'] ?? null
+                ),
+
+                'next_karana' => $nextKaranaItem['name'] ?? null,
+                'next_karana_end' => $this->formatPanchangTime(
+                    $nextKaranaItem['end'] ?? null
+                ),
+
+                'daily_guidance' =>
+                'Use today’s Panchang as a traditional reference '
+                    . 'for prayer, meditation and planning the day.',
+            ], fn($value) => $value !== null && $value !== '');
 
             return [
                 'title' => 'Today Panchang',
                 'subtitle' => 'Nandyal',
-                'body' => !empty($lines) ? implode("\n", $lines) : 'Panchang details are available today.',
-                'payload_json' => $data,
+                'body' => $body,
+                'payload_json' => $payload,
             ];
         } catch (\Throwable $e) {
+            report($e);
+
             return [
                 'title' => 'Today Panchang',
                 'subtitle' => 'Astro update',
                 'body' => 'Panchang update is temporarily unavailable.',
-                'payload_json' => ['error' => $e->getMessage()],
+                'payload_json' => null,
             ];
         }
     }
@@ -802,6 +1095,149 @@ class MyDayFeedService
         }
 
         return null;
+    }
+
+    private function activePanchangItem(array $items): ?array
+    {
+        if (empty($items)) {
+            return null;
+        }
+
+        $now = Carbon::now('Asia/Kolkata');
+
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $start = $item['start'] ?? null;
+            $end = $item['end'] ?? null;
+
+            if (!$start || !$end) {
+                continue;
+            }
+
+            try {
+                $startTime = Carbon::parse($start)->timezone('Asia/Kolkata');
+                $endTime = Carbon::parse($end)->timezone('Asia/Kolkata');
+
+                if ($now->betweenIncluded($startTime, $endTime)) {
+                    return $item;
+                }
+            } catch (\Throwable $e) {
+                continue;
+            }
+        }
+
+        return $items[0] ?? null;
+    }
+
+    private function nextPanchangItem(
+        array $items,
+        ?array $currentItem,
+    ): ?array {
+        if (!$currentItem || empty($items)) {
+            return null;
+        }
+
+        foreach ($items as $index => $item) {
+            if ($item === $currentItem) {
+                return $items[$index + 1] ?? null;
+            }
+        }
+
+        return null;
+    }
+
+
+
+    private function firstPanchangValue(
+        array $data,
+        array $paths
+    ): mixed {
+        foreach ($paths as $path) {
+            $value = data_get($data, $path);
+
+            if ($value !== null && $value !== '') {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    private function formatPanchangTime(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_array($value)) {
+            $value = $value['datetime']
+                ?? $value['time']
+                ?? $value['start']
+                ?? $value['end']
+                ?? null;
+        }
+
+        if (!$value || !is_scalar($value)) {
+            return null;
+        }
+
+        try {
+            return Carbon::parse((string) $value)
+                ->timezone('Asia/Kolkata')
+                ->format('h:i A');
+        } catch (\Throwable $e) {
+            return trim((string) $value);
+        }
+    }
+
+    private function extractPanchangPeriod(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_string($value) || is_numeric($value)) {
+            return trim((string) $value);
+        }
+
+        if (!is_array($value)) {
+            return null;
+        }
+
+        /*
+     * Some APIs return a list containing the first period.
+     */
+        if (array_is_list($value) && isset($value[0])) {
+            $value = $value[0];
+
+            if (!is_array($value)) {
+                return trim((string) $value);
+            }
+        }
+
+        $start = $value['start']
+            ?? $value['start_time']
+            ?? $value['from']
+            ?? null;
+
+        $end = $value['end']
+            ?? $value['end_time']
+            ?? $value['to']
+            ?? null;
+
+        $formattedStart = $this->formatPanchangTime($start);
+        $formattedEnd = $this->formatPanchangTime($end);
+
+        if ($formattedStart && $formattedEnd) {
+            return "{$formattedStart} – {$formattedEnd}";
+        }
+
+        return $formattedStart
+            ?? $formattedEnd
+            ?? ($value['name'] ?? null);
     }
 
     private function fallback(string $key): array

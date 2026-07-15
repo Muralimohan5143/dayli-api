@@ -374,7 +374,6 @@ Route::middleware('auth:sanctum')->group(function () {
             ->map(fn($key) => trim((string) $key))
             ->filter(fn($key) => $key !== '' && in_array($key, $allowedKeys, true))
             ->unique()
-            ->take(5)
             ->values();
 
         $items = $keys->map(function ($key) use ($service) {

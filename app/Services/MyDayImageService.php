@@ -82,7 +82,7 @@ class MyDayImageService
             );
         }
 
-        return $this->dailyImage(
+        return $this->dailyImageRecursive(
             folder: $key,
             seed: $seed ?? "{$key}|{$today}",
         );
@@ -189,6 +189,14 @@ class MyDayImageService
         );
     }
 
+    public function dailyImageRecursive(string $folder, string $seed): array
+    {
+        return $this->selectImageRecursive(
+            folder: $folder,
+            seed: $seed,
+        );
+    }
+
     /**
      * Stable selection helper.
      *
@@ -254,6 +262,54 @@ class MyDayImageService
 
             return [
                 'path' => $relativePath,
+                'url' => Storage::disk('public')->url($storagePath),
+            ];
+        } catch (Throwable $e) {
+            report($e);
+
+            return $this->emptyImage();
+        }
+    }
+
+    private function selectImageRecursive(string $folder, string $seed): array
+    {
+        try {
+            $folder = trim($folder, '/');
+
+            if ($folder === '') {
+                return $this->emptyImage();
+            }
+
+            $storageFolder = self::ROOT . '/' . $folder;
+
+            if (!Storage::disk('public')->exists($storageFolder)) {
+                return $this->emptyImage();
+            }
+
+            $files = collect(
+                Storage::disk('public')->allFiles($storageFolder)
+            )
+                ->filter(fn(string $file) => $this->isSupportedImage($file))
+                ->sort()
+                ->values();
+
+            if ($files->isEmpty()) {
+                return $this->emptyImage();
+            }
+
+            $index = $this->indexFromSeed(
+                seed: $seed,
+                count: $files->count(),
+            );
+
+            $storagePath = $files->get($index);
+
+            if (!is_string($storagePath) || $storagePath === '') {
+                return $this->emptyImage();
+            }
+
+            return [
+                'path' => $this->relativePath($storagePath),
                 'url' => Storage::disk('public')->url($storagePath),
             ];
         } catch (Throwable $e) {
