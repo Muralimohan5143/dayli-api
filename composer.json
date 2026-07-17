@@ -19,6 +19,7 @@
         "maatwebsite/excel": "^1.1",
         "owen-it/laravel-auditing": "^13.6",
         "phpoffice/phpspreadsheet": "^5.1",
+        "predis/predis": "^3.5",
         "signifly/laravel-shopify": "dev-master",
         "spatie/laravel-activitylog": "^4.11",
         "spatie/laravel-permission": "^6.21"

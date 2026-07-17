@@ -24,4 +24,11 @@ class FoodMenuToday extends Model
         'special_note',
         'is_active',
     ];
+
+    protected $casts = [
+        'menu_date' => 'date',
+        'planned_qty' => 'integer',
+        'available_qty' => 'integer',
+        'is_active' => 'boolean',
+    ];
 }

@@ -458,6 +458,21 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Chef Preorders
     Route::get('/chef/food-preorders', [FoodMenuTodayController::class, 'preorders']);
+
+    Route::get(
+        '/mobile/chef/home-food-orders',
+        [FoodMenuTodayController::class, 'chefHomeFoodOrders']
+    );
+
+    Route::post(
+        '/mobile/chef/home-food-orders/{id}/accept',
+        [FoodMenuTodayController::class, 'acceptHomeFoodOrder']
+    );
+
+    Route::post(
+        '/mobile/chef/home-food-orders/{id}/reject',
+        [FoodMenuTodayController::class, 'rejectHomeFoodOrder']
+    );
 });
 
 Route::middleware(['auth:sanctum'])->group(function () {

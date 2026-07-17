@@ -83,6 +83,13 @@ class Order extends Model
     ];
 
     protected $casts = [
+        'confirmed' => 'boolean',
+        'closed' => 'boolean',
+        'cancelled' => 'boolean',
+        'unpaid' => 'boolean',
+        'requires_shipping' => 'boolean',
+        'cancelled_at' => 'datetime',
+
         'subtotal' => 'decimal:2',
         'tax' => 'decimal:2',
         'discount' => 'decimal:2',
