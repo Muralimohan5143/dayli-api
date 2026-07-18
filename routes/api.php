@@ -451,6 +451,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::post('/chef/food-menu-today/broadcast', [FoodMenuTodayController::class, 'broadcastAllToday']);
     Route::post('/chef/food-menu-today/{id}/broadcast', [FoodMenuTodayController::class, 'broadcast']);
+    Route::post('/chef/food-menu-today/{id}/pause', [FoodMenuTodayController::class, 'pause']);
+    Route::post('/chef/food-menu-today/{id}/resume', [FoodMenuTodayController::class, 'resume']);
+    Route::post('/chef/food-menu-today/{id}/stop', [FoodMenuTodayController::class, 'stop']);
 
     // Customer
     Route::get('/food/today', [FoodMenuTodayController::class, 'customerTodayFood']);
@@ -467,6 +470,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post(
         '/mobile/chef/home-food-orders/{id}/accept',
         [FoodMenuTodayController::class, 'acceptHomeFoodOrder']
+    );
+
+    Route::post(
+        '/mobile/chef/home-food-orders/{id}/complete',
+        [FoodMenuTodayController::class, 'completeHomeFoodOrder']
     );
 
     Route::post(

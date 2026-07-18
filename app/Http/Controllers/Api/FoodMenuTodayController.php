@@ -79,7 +79,7 @@ class FoodMenuTodayController extends Controller
 
     public function index(Request $request)
     {
-        $chefId = Auth::id();
+        $chefId = (int) Auth::id();
         $date = $request->date ?? now()->toDateString();
 
         $items = FoodMenuToday::query()
@@ -95,6 +95,61 @@ class FoodMenuTodayController extends Controller
             ->orderByDesc('food_menu_today.id')
             ->get();
 
+        $orders = Order::query()
+            ->with('items')
+            ->where('vendor_id', $chefId)
+            ->where('source_name', 'dayli_home_food')
+            ->where('order_type', 'on_demand')
+            ->whereDate('delivery_date', $date)
+            ->get();
+
+        $summaryByMenu = [];
+
+        foreach ($orders as $order) {
+            $menuTodayId = (int) data_get($order->meta, 'food_menu_today_id', 0);
+            if ($menuTodayId <= 0) {
+                continue;
+            }
+
+            $qty = (int) optional($order->items->first())->quantity;
+
+            $summaryByMenu[$menuTodayId] ??= [
+                'orders_count' => 0,
+                'to_make_qty' => 0,
+                'pending_orders_count' => 0,
+                'accepted_orders_count' => 0,
+                'rejected_orders_count' => 0,
+            ];
+
+            if ($order->status === 'pending') {
+                $summaryByMenu[$menuTodayId]['orders_count']++;
+                $summaryByMenu[$menuTodayId]['pending_orders_count']++;
+                $summaryByMenu[$menuTodayId]['to_make_qty'] += $qty;
+            } elseif ($order->status === 'confirmed') {
+                $summaryByMenu[$menuTodayId]['orders_count']++;
+                $summaryByMenu[$menuTodayId]['accepted_orders_count']++;
+                $summaryByMenu[$menuTodayId]['to_make_qty'] += $qty;
+            } elseif ($order->status === 'cancelled') {
+                $summaryByMenu[$menuTodayId]['rejected_orders_count']++;
+            }
+        }
+
+        $items->transform(function ($item) use ($summaryByMenu) {
+            $summary = $summaryByMenu[(int) $item->id] ?? [
+                'orders_count' => 0,
+                'to_make_qty' => 0,
+                'pending_orders_count' => 0,
+                'accepted_orders_count' => 0,
+                'rejected_orders_count' => 0,
+            ];
+
+            foreach ($summary as $key => $value) {
+                $item->setAttribute($key, $value);
+            }
+
+            return $item;
+        });
+
         return response()->json([
             'success' => true,
             'data' => $items,
@@ -105,20 +160,115 @@ class FoodMenuTodayController extends Controller
     {
         $today = FoodMenuToday::where('id', $id)
             ->where('chef_id', Auth::id())
+            ->whereDate('menu_date', now()->toDateString())
             ->firstOrFail();
+
+        if ($today->status === 'stopped') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Stopped item cannot be broadcast again today.',
+            ], 422);
+        }
 
         $today->update([
             'broadcast_status' => 'sent',
             'status' => 'broadcasted',
+            'is_active' => 1,
         ]);
 
         return response()->json([
             'success' => true,
-            'message' => 'Today menu broadcasted successfully.',
-            'data' => $today,
+            'message' => 'Food item broadcasted successfully.',
+            'data' => $today->fresh(),
         ]);
     }
 
+    public function pause($id)
+    {
+        $today = FoodMenuToday::where('id', $id)
+            ->where('chef_id', Auth::id())
+            ->whereDate('menu_date', now()->toDateString())
+            ->firstOrFail();
+
+        if (!in_array($today->status, ['broadcasted', 'cooking'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only a live item can be paused.',
+            ], 422);
+        }
+
+        $today->update([
+            'status' => 'paused',
+            'is_active' => 1,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Orders paused for this item.',
+            'data' => $today->fresh(),
+        ]);
+    }
+
+    public function resume($id)
+    {
+        $today = FoodMenuToday::where('id', $id)
+            ->where('chef_id', Auth::id())
+            ->whereDate('menu_date', now()->toDateString())
+            ->firstOrFail();
+
+        if ($today->status !== 'paused') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only a paused item can be resumed.',
+            ], 422);
+        }
+
+        $today->update([
+            'broadcast_status' => 'sent',
+            'status' => 'broadcasted',
+            'is_active' => 1,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Orders resumed for this item.',
+            'data' => $today->fresh(),
+        ]);
+    }
+
+    public function stop($id)
+    {
+        $today = FoodMenuToday::where('id', $id)
+            ->where('chef_id', Auth::id())
+            ->whereDate('menu_date', now()->toDateString())
+            ->firstOrFail();
+
+        if ($today->status === 'stopped') {
+            return response()->json([
+                'success' => true,
+                'message' => 'Orders are already stopped for this item.',
+                'data' => $today,
+            ]);
+        }
+
+        if (!in_array($today->status, ['broadcasted', 'paused', 'cooking'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only a broadcasted or paused item can be stopped.',
+            ], 422);
+        }
+
+        $today->update([
+            'status' => 'stopped',
+            'is_active' => 0,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Orders stopped for this item for today.',
+            'data' => $today->fresh(),
+        ]);
+    }
 
 
     public function customerTodayFood(Request $request)
@@ -473,10 +623,10 @@ class FoodMenuTodayController extends Controller
             ->whereDate('menu_date', now()->toDateString())
             ->firstOrFail();
 
-        if ($row->status === 'broadcasted') {
+        if ($row->status === 'stopped') {
             return response()->json([
                 'success' => false,
-                'message' => 'Broadcasted menu cannot be edited.',
+                'message' => 'Stopped item cannot be edited today.',
             ], 422);
         }
 
@@ -505,10 +655,10 @@ class FoodMenuTodayController extends Controller
             ->whereDate('menu_date', now()->toDateString())
             ->firstOrFail();
 
-        if ($row->status === 'broadcasted') {
+        if ($row->status !== 'draft') {
             return response()->json([
                 'success' => false,
-                'message' => 'Broadcasted menu cannot be deleted.',
+                'message' => 'Only an item that has not been broadcast can be deleted.',
             ], 422);
         }
 
@@ -717,6 +867,108 @@ class FoodMenuTodayController extends Controller
             ],
         ]);
     }
+
+    public function completeHomeFoodOrder($id)
+    {
+        $chefId = (int) Auth::id();
+
+        $result = DB::transaction(function () use ($id, $chefId) {
+            $order = Order::query()
+                ->with('items')
+                ->where('id', $id)
+                ->where('vendor_id', $chefId)
+                ->where('source_name', 'dayli_home_food')
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($order->status === 'fulfilled') {
+                return [
+                    'order' => $order,
+                    'already_processed' => true,
+                ];
+            }
+
+            if ($order->status === 'cancelled' || $order->cancelled) {
+                throw ValidationException::withMessages([
+                    'order_id' => 'Cancelled order cannot be completed.',
+                ]);
+            }
+
+            if ($order->status !== 'confirmed') {
+                throw ValidationException::withMessages([
+                    'order_id' => 'Only an accepted order can be completed.',
+                ]);
+            }
+
+            $order->update([
+                'status' => 'fulfilled',
+                'confirmed' => 1,
+                'cancelled' => 0,
+                'closed' => 1,
+                'delivery_status' => 'delivered',
+                'fulfillment_status' => 'fulfilled',
+                'display_fulfillment_status' => 'Fulfilled',
+            ]);
+
+            $foodMenuTodayId = data_get(
+                $order->meta,
+                'food_menu_today_id'
+            );
+
+            if ($foodMenuTodayId) {
+                FoodPreorder::query()
+                    ->where('food_menu_today_id', $foodMenuTodayId)
+                    ->where('customer_id', $order->customer_id)
+                    ->where('status', 'confirmed')
+                    ->latest('id')
+                    ->limit(1)
+                    ->update([
+                        'status' => 'fulfilled',
+                    ]);
+            }
+
+            return [
+                'order' => $order->fresh('items'),
+                'already_processed' => false,
+            ];
+        }, 3);
+
+        $order = $result['order'];
+        $item = $order->items->first();
+
+        if (!$result['already_processed']) {
+            SendPushToUserJob::dispatch(
+                (int) $order->customer_id,
+                [
+                    'title' => 'Home Food Order Completed',
+                    'body' => "Your order for {$item?->title} has been completed.",
+                    'data' => [
+                        'type' => 'home_food_order_completed',
+                        'screen' => 'customer_home_food_order',
+                        'order_id' => (string) $order->id,
+                        'chef_id' => (string) $order->vendor_id,
+                        'status' => 'fulfilled',
+                        'item_name' => (string) ($item?->title ?? ''),
+                        'qty' => (string) ($item?->quantity ?? 0),
+                    ],
+                ]
+            );
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $result['already_processed']
+                ? 'Order was already completed.'
+                : 'Order completed successfully.',
+            'data' => [
+                'order_id' => (int) $order->id,
+                'status' => $order->status,
+                'confirmed' => (bool) $order->confirmed,
+                'cancelled' => (bool) $order->cancelled,
+            ],
+        ]);
+    }
+
     public function rejectHomeFoodOrder(Request $request, $id)
     {
         $validated = $request->validate([
