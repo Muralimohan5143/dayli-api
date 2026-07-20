@@ -262,7 +262,7 @@ class MyDayImageService
 
             return [
                 'path' => $relativePath,
-                'url' => Storage::disk('public')->url($storagePath),
+                'url' => asset('storage/' . $storagePath),
             ];
         } catch (Throwable $e) {
             report($e);
@@ -310,7 +310,7 @@ class MyDayImageService
 
             return [
                 'path' => $this->relativePath($storagePath),
-                'url' => Storage::disk('public')->url($storagePath),
+                'url' => asset('storage/' . $storagePath),
             ];
         } catch (Throwable $e) {
             report($e);
