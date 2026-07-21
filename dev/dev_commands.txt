@@ -195,6 +195,9 @@ cd ~/deploy-scripts
 ./deploy_dayli_web.sh
 
 
+dart run tool/deploy_flutter.dart   
+
+
 # To check daily orders are created automatically in server 
 cd /var/www/dayli-api/current
 php artisan dayli:generate-daily-orders --date=2026-04-23  --dry  

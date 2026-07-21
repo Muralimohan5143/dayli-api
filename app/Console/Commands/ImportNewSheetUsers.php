@@ -8,6 +8,10 @@ use Illuminate\Support\Str;
 use Throwable;
 
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Reader\Xlsx;
+
+use PhpOffice\PhpSpreadsheet\Cell\Cell;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 
 class ImportNewSheetUsers extends Command
 {
@@ -62,44 +66,198 @@ class ImportNewSheetUsers extends Command
 
     private function importFromXlsx(string $path, int $sheetIndex, bool $dryRun, ?int $defaultZone, string $dedupeMode): int
     {
-        $spreadsheet = IOFactory::load($path);
-        $sheet = $spreadsheet->getSheet($sheetIndex);
+        /** @var Xlsx $reader */
+        $reader = new Xlsx();
 
-        // A,B,C.. keys
-        $rows = $sheet->toArray(null, true, true, true);
+        $reader->setReadDataOnly(true);
+        $reader->setReadEmptyCells(false);
+        $reader->setIncludeCharts(false);
+
+        // Read worksheet metadata without loading all cell data
+        $worksheetInfo = $reader->listWorksheetInfo($path);
+
+        $sheetNames = array_map(
+            fn(array $sheet): string => $sheet['worksheetName'],
+            $worksheetInfo
+        );
+
+        if (!isset($sheetNames[$sheetIndex])) {
+            $this->error("Invalid sheet index: {$sheetIndex}");
+            $this->line("Available sheets:");
+
+            foreach ($sheetNames as $index => $sheetName) {
+                $this->line("{$index} = {$sheetName}");
+            }
+
+            return self::FAILURE;
+        }
+
+        $sheetName = $sheetNames[$sheetIndex];
+
+        $this->info("Loading sheet {$sheetIndex}: {$sheetName}");
+
+        // setLoadSheetsOnly requires the sheet NAME
+        $reader->setLoadSheetsOnly([$sheetName]);
+
+        $spreadsheet = $reader->load($path);
+
+        // Since only one sheet was loaded, its new index is 0
+        $sheet = $spreadsheet->getSheet(0);
+
+        // Read rows without calculating formulas.
+        // Preserve Excel column letters: A, B, C...
+        $rows = [];
+
+        foreach ($sheet->getRowIterator() as $row) {
+            $currentRow = [];
+
+            $cellIterator = $row->getCellIterator();
+            $cellIterator->setIterateOnlyExistingCells(true);
+
+            foreach ($cellIterator as $cell) {
+                $currentRow[$cell->getColumn()] =
+                    $this->safeCellValue($cell);
+            }
+
+            $rows[$row->getRowIndex()] = $currentRow;
+        }
 
         if (count($rows) < 2) {
             $this->error("XLSX has no data rows.");
             return self::FAILURE;
         }
 
-        for ($i = 0; $i < 15; $i++) {
-            array_shift($rows); // skip till row 16
-        }
-        $headerRow = array_shift($rows);
+        $headerRowNumber = null;
         $headersByCol = [];
-        foreach ($headerRow as $col => $val) {
-            $headersByCol[$col] = $this->normKey((string)$val);
+
+        // Search the first 100 worksheet rows for a probable header row.
+        foreach ($rows as $excelRowNumber => $candidateRow) {
+            if ($excelRowNumber > 100) {
+                break;
+            }
+
+            $candidateHeaders = [];
+
+            foreach ($candidateRow as $col => $value) {
+                $candidateHeaders[$col] = $this->normKey((string) $value);
+            }
+
+            $hasName = $this->findAnyCol($candidateHeaders, [
+                'name',
+                'customer_name',
+                'display_name',
+                'subscriber_name',
+            ]);
+
+            $hasPhone = $this->findAnyCol($candidateHeaders, [
+                'phone',
+                'phone_number',
+                'phone_no',
+                'mobile',
+                'mobile_number',
+                'contact_number',
+            ]);
+
+            $hasAddress = $this->findAnyCol($candidateHeaders, [
+                'address',
+                'address_full',
+                'full_address',
+                'delivery_address',
+                'location',
+            ]);
+
+            if ($hasName !== null && $hasPhone !== null) {
+                $headerRowNumber = $excelRowNumber;
+                $headersByCol = $candidateHeaders;
+                break;
+            }
         }
 
-        // Required columns
-        $colName  = $this->findCol($headersByCol, 'name');
-        $colPhone = $this->findCol($headersByCol, 'phone_number');
-        $colAddr  = $this->findCol($headersByCol, 'address')
-            ?? $this->findCol($headersByCol, 'address_full');
+        if ($headerRowNumber === null) {
+            $this->error('Unable to detect the customer header row.');
+            $this->line('First worksheet rows detected:');
 
-        if (!$colName || !$colPhone || !$colAddr) {
-            $this->error("Missing required columns. Found headers: " . implode(', ', array_values($headersByCol)));
+            foreach (array_slice($rows, 0, 25, true) as $rowNumber => $row) {
+                $values = array_filter(
+                    array_map(
+                        fn($value) => trim((string) $value),
+                        $row
+                    ),
+                    fn($value) => $value !== ''
+                );
+
+                $this->line(
+                    "Row {$rowNumber}: " .
+                        implode(' | ', array_slice($values, 0, 15))
+                );
+            }
+
             return self::FAILURE;
         }
 
+        $this->info("Detected header row: {$headerRowNumber}");
+
+        // Remove header and every row above it.
+        $rows = array_filter(
+            $rows,
+            fn($rowNumber) => $rowNumber > $headerRowNumber,
+            ARRAY_FILTER_USE_KEY
+        );
+
+        // Required columns
+        $colName = $this->findAnyCol($headersByCol, [
+            'name',
+            'customer_name',
+            'display_name',
+            'subscriber_name',
+        ]);
+
+        $colPhone = $this->findAnyCol($headersByCol, [
+            'phone',
+            'phone_number',
+            'phone_no',
+            'mobile',
+            'mobile_number',
+            'contact_number',
+        ]);
+
+        $colAddr = $this->findAnyCol($headersByCol, [
+            'address',
+            'address_full',
+            'full_address',
+            'delivery_address',
+            'location',
+        ]);
+
+        if ($colName === null || $colPhone === null) {
+            $this->error(
+                'Missing required name or phone column. Found headers: ' .
+                    implode(', ', array_filter(array_values($headersByCol)))
+            );
+
+            return self::FAILURE;
+        }
+
+        // Address may be absent in some historical sheets.
+        if ($colAddr === null) {
+            $this->warn('Address column was not found. Users will be imported without an address.');
+        }
+
+        $this->info(
+            'XLSX columns: ' .
+                "name={$colName}, " .
+                "phone={$colPhone}, " .
+                'address=' . ($colAddr ?? 'not found')
+        );
         $this->info("XLSX columns: name={$colName}, phone={$colPhone}, address={$colAddr}");
 
         return $this->processUsers(
             $rows,
             fn($r) => (string)($r[$colName] ?? ''),
             fn($r) => (string)($r[$colPhone] ?? ''),
-            fn($r) => (string)($r[$colAddr] ?? ''),
+            fn($r) => $colAddr !== null
+                ? (string) ($r[$colAddr] ?? '')
+                : '',
             $dryRun,
             $defaultZone,
             $dedupeMode
@@ -178,6 +336,13 @@ class ImportNewSheetUsers extends Command
 
             $phoneNorm = $this->normalizePhone($phoneRaw);
             if ($nameRaw === '' || $phoneNorm === '') {
+                $this->warn(
+                    "Skipped row {$rowNum}: "
+                        . "name='{$nameRaw}' "
+                        . "phone='{$phoneRaw}' "
+                        . "normalized='{$phoneNorm}'"
+                );
+
                 $skipped++;
                 continue;
             }
@@ -286,11 +451,41 @@ class ImportNewSheetUsers extends Command
         return self::SUCCESS;
     }
 
+    private function safeCellValue(Cell $cell): mixed
+    {
+        if ($cell->getDataType() === DataType::TYPE_FORMULA) {
+            // Use Excel's previously saved/cached result.
+            // Do not ask PhpSpreadsheet to calculate the formula.
+            $cachedValue = $cell->getOldCalculatedValue();
+
+            if ($cachedValue !== null && $cachedValue !== '') {
+                return $cachedValue;
+            }
+
+            return null;
+        }
+
+        return $cell->getValue();
+    }
+
     private function findCol(array $headersByCol, string $wantKey): ?string
     {
         foreach ($headersByCol as $col => $key) {
             if ($key === $wantKey) return $col;
         }
+        return null;
+    }
+
+    private function findAnyCol(array $headersByCol, array $possibleKeys): ?string
+    {
+        foreach ($possibleKeys as $key) {
+            $column = $this->findCol($headersByCol, $key);
+
+            if ($column !== null) {
+                return $column;
+            }
+        }
+
         return null;
     }
 

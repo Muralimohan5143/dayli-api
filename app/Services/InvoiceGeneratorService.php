@@ -26,10 +26,9 @@ class InvoiceGeneratorService
             ->where('oi.actuals_date', '>=', $monthStart)
             ->where('oi.actuals_date', '<', $monthEndExclusive)
             ->selectRaw('
-                o.customer_id as user_id,
-                MIN(o.id) as any_order_id,
-                MIN(o.order_type) as any_order_type,
-                oi.product_id as product_id,
+              o.customer_id as user_id,
+MIN(o.order_type) as any_order_type,
+oi.product_id as product_id,
                 oi.variant_id as variant_id,
                 oi.title as title,
                 SUM(oi.quantity) as monthly_count,
@@ -52,7 +51,6 @@ class InvoiceGeneratorService
             if (!isset($byUser[$uid])) {
                 $byUser[$uid] = [
                     'user_id' => $uid,
-                    'order_id' => (int) $r->any_order_id,
                     'order_type' => (string) $r->any_order_type,
                     'items' => [],
                 ];
@@ -103,7 +101,6 @@ class InvoiceGeneratorService
             );
 
             $data = [
-                'order_id' => $payload['order_id'],
                 'order_type' => $payload['order_type'],
                 'order_start_date' => $monthStart,
                 'order_end_date' => Carbon::parse($monthEndExclusive)->subDay()->toDateString(),

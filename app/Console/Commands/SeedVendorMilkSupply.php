@@ -58,8 +58,15 @@ class SeedVendorMilkSupply extends Command
 
         $vendors = [
             [
-                'user_id' => 11346,
                 'name' => 'Bhasker sir',
+
+                'user_lookup_names' => [
+                    'Bhasker sir',
+                    'Bhaskar sir',
+                    'Bhasker',
+                    'Bhaskar',
+                ],
+
                 'service_handle' => 'milk-supplier',
                 'title' => 'Bhaskar Milk Supply',
                 'daily_items' => [
@@ -308,7 +315,7 @@ class SeedVendorMilkSupply extends Command
                         ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 1.00, 'price' => 40.00],
                         ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
                     ],
-                      '2026-05-20' => [
+                    '2026-05-20' => [
                         ['product_id' => 8383403917586, 'variant_id' => 45490819596562, 'label' => 'Arokya Gold(500 ml)', 'qty' => 5.00, 'price' => 40.00],
                         ['product_id' => 8409961103634, 'variant_id' => 45560024826130, 'label' => 'Hatsun Curd (Big, 400 g)', 'qty' => 1.00, 'price' => 40.00],
                         ['product_id' => 10288980754706, 'variant_id' => 52149601829138, 'label' => 'Hatsun Curd (Small, 110 g)', 'qty' => 1.00, 'price' => 10.00],
@@ -316,8 +323,14 @@ class SeedVendorMilkSupply extends Command
                 ],
             ],
             [
-                'user_id' => 11345,
                 'name' => 'Vishnu Vardhan Reddy',
+
+                'user_lookup_names' => [
+                    'Vishnu Vardhan Reddy',
+                    'Vishnu Vardhan',
+                    'Vishnu',
+                ],
+
                 'service_handle' => 'milk-supplier',
                 'title' => 'Vishnu Milk Supply',
                 'daily_items' => [
@@ -677,55 +690,85 @@ class SeedVendorMilkSupply extends Command
 
         foreach ($vendors as $vendor) {
             $this->line('');
-            $this->info("Processing vendor: {$vendor['name']} ({$vendor['user_id']})");
+
+            $user = $this->resolveVendorUser(
+                vendorName: $vendor['name'],
+                lookupNames: $vendor['user_lookup_names']
+            );
+
+            $vendorUserId = (int) $user->id;
+
+            $this->info(
+                "Processing vendor: {$vendor['name']} " .
+                    "(resolved user_id={$vendorUserId})"
+            );
+
+            $this->log('vendor user resolved', [
+                'vendor_name' => $vendor['name'],
+                'user_id' => $vendorUserId,
+                'database_name' => $user->name ?? null,
+                'database_display_name' => $user->display_name ?? null,
+                'phone' => $user->phone ?? null,
+            ]);
 
             DB::beginTransaction();
 
             try {
-                $this->seedRoles($vendor['user_id'], $vendorRoleId, $vendorMilkRoleId);
+                $this->seedRoles(
+                    $vendorUserId,
+                    $vendorRoleId,
+                    $vendorMilkRoleId
+                );
 
                 $this->seedUserService(
-                    userId: $vendor['user_id'],
+                    userId: $vendorUserId,
                     serviceHandle: $vendor['service_handle'],
                     subscriptionTypeId: $subscriptionTypeId,
                     zoneId: $zoneId
                 );
 
                 $scrId = $this->seedScr(
-                    userId: $vendor['user_id'],
+                    userId: $vendorUserId,
                     subscriptionTypeId: $subscriptionTypeId,
                     zoneId: $zoneId
                 );
 
                 $draftOrderId = $this->seedDraftOrder(
                     scrId: $scrId,
-                    vendorId: $vendor['user_id'],
+                    vendorId: $vendorUserId,
                     zoneId: $zoneId,
                     title: $vendor['title']
                 );
 
-                $this->linkScrToDraftOrder($scrId, $draftOrderId);
+                $this->linkScrToDraftOrder(
+                    $scrId,
+                    $draftOrderId
+                );
 
                 $this->seedMergedDoiRanges(
                     draftOrderId: $draftOrderId,
-                    vendorId: $vendor['user_id'],
+                    vendorId: $vendorUserId,
                     dailyItems: $vendor['daily_items']
                 );
 
                 if ($this->dryRun) {
                     DB::rollBack();
                     $this->warn("DRY RUN: rolled back {$vendor['name']}");
-                    $this->log('DRY RUN rollback', ['vendor_id' => $vendor['user_id']]);
+                    $this->log('DRY RUN rollback', [
+                        'vendor_id' => $vendorUserId,
+                    ]);
                 } else {
                     DB::commit();
                     $this->info("Committed: {$vendor['name']}");
-                    $this->log('Committed vendor seed', ['vendor_id' => $vendor['user_id']]);
+                    $this->log('Committed vendor seed', [
+                        'vendor_id' => $vendorUserId,
+                    ]);
                 }
             } catch (\Throwable $e) {
                 DB::rollBack();
                 $this->error("Failed for {$vendor['name']}: " . $e->getMessage());
                 $this->log('FAILED vendor seed', [
-                    'vendor_id' => $vendor['user_id'],
+                    'vendor_id' => $vendorUserId,
                     'error' => $e->getMessage(),
                 ]);
                 throw $e;
@@ -737,6 +780,124 @@ class SeedVendorMilkSupply extends Command
         $this->log('END vendor seed', ['dry_run' => $this->dryRun]);
 
         return self::SUCCESS;
+    }
+
+    private function resolveVendorUser(
+        string $vendorName,
+        array $lookupNames
+    ): object {
+        $lookupNames = array_values(
+            array_unique(
+                array_filter(
+                    array_map(
+                        fn($name) => trim((string) $name),
+                        $lookupNames
+                    )
+                )
+            )
+        );
+
+        if (empty($lookupNames)) {
+            throw new \RuntimeException(
+                "No user lookup names configured for {$vendorName}."
+            );
+        }
+
+        /*
+     * First attempt:
+     * Exact match against name/display_name.
+     */
+        $exactMatches = DB::table('users')
+            ->where(function ($query) use ($lookupNames) {
+                foreach ($lookupNames as $lookupName) {
+                    $query
+                        ->orWhereRaw(
+                            'LOWER(TRIM(name)) = ?',
+                            [mb_strtolower($lookupName)]
+                        )
+                        ->orWhereRaw(
+                            'LOWER(TRIM(display_name)) = ?',
+                            [mb_strtolower($lookupName)]
+                        );
+                }
+            })
+            ->select([
+                'id',
+                'name',
+                'display_name',
+                'phone',
+            ])
+            ->get();
+
+        if ($exactMatches->count() === 1) {
+            return $exactMatches->first();
+        }
+
+        if ($exactMatches->count() > 1) {
+            $matchedUsers = $exactMatches
+                ->map(
+                    fn($user) =>
+                    "id={$user->id}, " .
+                        "name={$user->name}, " .
+                        "display_name={$user->display_name}"
+                )
+                ->implode(' | ');
+
+            throw new \RuntimeException(
+                "Multiple exact users found for {$vendorName}: " .
+                    $matchedUsers
+            );
+        }
+
+        /*
+     * Second attempt:
+     * Partial matching for minor spelling differences.
+     */
+        $partialMatches = DB::table('users')
+            ->where(function ($query) use ($lookupNames) {
+                foreach ($lookupNames as $lookupName) {
+                    $query
+                        ->orWhere('name', 'like', '%' . $lookupName . '%')
+                        ->orWhere(
+                            'display_name',
+                            'like',
+                            '%' . $lookupName . '%'
+                        );
+                }
+            })
+            ->select([
+                'id',
+                'name',
+                'display_name',
+                'phone',
+            ])
+            ->get();
+
+        if ($partialMatches->count() === 1) {
+            return $partialMatches->first();
+        }
+
+        if ($partialMatches->count() > 1) {
+            $matchedUsers = $partialMatches
+                ->map(
+                    fn($user) =>
+                    "id={$user->id}, " .
+                        "name={$user->name}, " .
+                        "display_name={$user->display_name}"
+                )
+                ->implode(' | ');
+
+            throw new \RuntimeException(
+                "Multiple possible users found for {$vendorName}: " .
+                    $matchedUsers
+            );
+        }
+
+        throw new \RuntimeException(
+            "Vendor user not found in users table: {$vendorName}. " .
+                'Checked names: ' .
+                implode(', ', $lookupNames)
+        );
     }
 
     private function seedRoles(int $userId, int $vendorRoleId, int $vendorMilkRoleId): void
@@ -1138,29 +1299,182 @@ class SeedVendorMilkSupply extends Command
         }
     }
 
+    private function resolveProductVariant(
+        string $label,
+        int $fallbackProductId,
+        int $fallbackVariantId
+    ): array {
+        /*
+     * First preference:
+     * Existing hardcoded IDs, only when both actually exist.
+     */
+        $existingVariant = DB::table('variants')
+            ->where('variant_id', $fallbackVariantId)
+            ->where('product_id', $fallbackProductId)
+            ->first();
+
+        if ($existingVariant) {
+            return [
+                'product_id' => (int) $existingVariant->product_id,
+                'variant_id' => (int) $existingVariant->variant_id,
+            ];
+        }
+
+        /*
+     * Second preference:
+     * Match by normalized label/title.
+     */
+        $normalizedLabel = mb_strtolower(trim($label));
+
+        $matches = DB::table('variants as v')
+            ->join(
+                'products as p',
+                'p.product_id',
+                '=',
+                'v.product_id'
+            )
+            ->where(function ($query) use ($normalizedLabel) {
+                $query
+                    ->whereRaw(
+                        'LOWER(TRIM(v.title)) = ?',
+                        [$normalizedLabel]
+                    )
+                    ->orWhereRaw(
+                        'LOWER(TRIM(p.title)) = ?',
+                        [$normalizedLabel]
+                    )
+                    ->orWhereRaw(
+                        'LOWER(CONCAT(TRIM(p.title), " ", TRIM(v.title))) = ?',
+                        [$normalizedLabel]
+                    );
+            })
+            ->select([
+                'p.product_id',
+                'p.title as product_title',
+                'v.variant_id',
+                'v.title as variant_title',
+            ])
+            ->get();
+
+        if ($matches->count() === 1) {
+            $match = $matches->first();
+
+            $this->line(
+                "  resolved product: {$label} " .
+                    "=> product_id={$match->product_id}, " .
+                    "variant_id={$match->variant_id}"
+            );
+
+            return [
+                'product_id' => (int) $match->product_id,
+                'variant_id' => (int) $match->variant_id,
+            ];
+        }
+
+        /*
+     * Third preference:
+     * Looser partial label lookup.
+     */
+        $searchWords = collect(
+            preg_split('/[^a-zA-Z0-9]+/', $label)
+        )
+            ->map(fn($word) => trim($word))
+            ->filter(fn($word) => mb_strlen($word) >= 3)
+            ->values();
+
+        $partialMatches = DB::table('variants as v')
+            ->join(
+                'products as p',
+                'p.product_id',
+                '=',
+                'v.product_id'
+            )
+            ->where(function ($query) use ($searchWords) {
+                foreach ($searchWords as $word) {
+                    $query->orWhere(function ($subQuery) use ($word) {
+                        $subQuery
+                            ->where('p.title', 'like', '%' . $word . '%')
+                            ->orWhere('v.title', 'like', '%' . $word . '%');
+                    });
+                }
+            })
+            ->select([
+                'p.product_id',
+                'p.title as product_title',
+                'v.variant_id',
+                'v.title as variant_title',
+            ])
+            ->distinct()
+            ->get();
+
+        if ($partialMatches->count() === 1) {
+            $match = $partialMatches->first();
+
+            $this->line(
+                "  resolved product: {$label} " .
+                    "=> product_id={$match->product_id}, " .
+                    "variant_id={$match->variant_id}"
+            );
+
+            return [
+                'product_id' => (int) $match->product_id,
+                'variant_id' => (int) $match->variant_id,
+            ];
+        }
+
+        if ($partialMatches->count() > 1) {
+            $possibleMatches = $partialMatches
+                ->map(
+                    fn($row) =>
+                    "product_id={$row->product_id}, " .
+                        "product={$row->product_title}, " .
+                        "variant_id={$row->variant_id}, " .
+                        "variant={$row->variant_title}"
+                )
+                ->implode(' | ');
+
+            throw new \RuntimeException(
+                "Multiple product/variant matches found for '{$label}': " .
+                    $possibleMatches
+            );
+        }
+
+        throw new \RuntimeException(
+            "Product/variant not found for '{$label}'. " .
+                "Old product_id={$fallbackProductId}, " .
+                "old variant_id={$fallbackVariantId}"
+        );
+    }
+
     private function seedMergedDoiRanges(
         int $draftOrderId,
         int $vendorId,
         array $dailyItems
     ): void {
         $byVariant = [];
-
         foreach ($dailyItems as $date => $items) {
             foreach ($items as $item) {
-                $variantKey = (string) $item['variant_id'];
+                $resolvedItem = $this->resolveProductVariant(
+                    label: (string) $item['label'],
+                    fallbackProductId: (int) $item['product_id'],
+                    fallbackVariantId: (int) $item['variant_id'],
+                );
+
+                $variantKey = (string) $resolvedItem['variant_id'];
 
                 $byVariant[$variantKey][] = [
                     'date' => $date,
-                    'product_id' => (int) $item['product_id'],
-                    'variant_id' => (int) $item['variant_id'],
+                    'product_id' => $resolvedItem['product_id'],
+                    'variant_id' => $resolvedItem['variant_id'],
                     'qty' => (float) $item['qty'],
                     'price' => (float) $item['price'],
                     'label' => (string) $item['label'],
-                    'status' => ((float) $item['qty'] > 0) ? 'active' : 'paused',
+                    'status' => ((float) $item['qty'] > 0)
+                        ? 'active'
+                        : 'paused',
                 ];
             }
         }
-
         foreach ($byVariant as $variantRows) {
             usort($variantRows, fn($a, $b) => strcmp($a['date'], $b['date']));
 
