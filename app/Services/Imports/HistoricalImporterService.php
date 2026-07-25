@@ -2,6 +2,7 @@
 
 namespace App\Services\Imports;
 
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
@@ -298,7 +299,8 @@ class HistoricalImporterService
 
         $header = $rows[$headerRowIndex];
 
-        $columns = $this->detectColumns($header);
+        // $columns = $this->detectColumns($header);
+
 
         /*
  * In Apr–Jun sheets, the Day 1 ... Day 31 headings are
@@ -312,6 +314,7 @@ class HistoricalImporterService
         $previousHeader = $rows[$headerRowIndex - 1] ?? [];
 
         $combinedHeader = [];
+
 
         $allColumnIndexes = array_unique(
             array_merge(
@@ -333,6 +336,14 @@ class HistoricalImporterService
                 $previousValue . ' ' . $currentValue
             );
         }
+
+        $columns = $this->detectColumns($combinedHeader);
+
+        // if ($month === '2026-02') {
+        //     dump($columns);
+        // }
+
+
 
         $dayColumns = $this->detectDayColumns(
             $combinedHeader,
@@ -455,6 +466,14 @@ class HistoricalImporterService
 
             $summary['total_delivered_quantity'] += $deliveredQuantity;
 
+            $sheetDeliveryCount = $this->numericValue(
+                $this->cell($row, $columns['delivery_count'])
+            );
+
+            $deliveryFee = $this->moneyValue(
+                $this->cell($row, $columns['delivery_fee'])
+            );
+
             $previousDues = $this->moneyValue(
                 $this->cell($row, $columns['previous_dues'])
             );
@@ -470,6 +489,17 @@ class HistoricalImporterService
             $closingDues = $this->moneyValue(
                 $this->cell($row, $columns['closing_dues'])
             );
+
+            // if ($name === 'Sreenu') {
+            //     dump([
+            //         'month' => $month,
+            //         'delivery_fee' => $deliveryFee ?? null,
+            //         'previous_dues' => $previousDues,
+            //         'this_month_dues' => $thisMonthDues,
+            //         'payment' => $payment,
+            //         'closing_dues' => $closingDues,
+            //     ]);
+            // }
 
             $parsedRows[] = [
                 'month' => $month,
@@ -491,6 +521,8 @@ class HistoricalImporterService
                 'delivered_days' => $delivery['delivered_days'],
                 'daily_quantities' => $delivery['daily_quantities'],
 
+                'delivery_count' => $sheetDeliveryCount,
+                'delivery_fee' => $deliveryFee,
                 'previous_dues' => $previousDues,
                 'this_month_dues' => $thisMonthDues,
                 'payment' => $payment,
@@ -705,6 +737,23 @@ class HistoricalImporterService
                 'count',
                 'ask_count',
                 'monthly_count',
+            ]),
+
+            'delivery_count' => $this->findColumn($normalized, [
+                'delivery_count',
+                'deliveries',
+                'delivered_count',
+                'no_of_deliveries',
+                'number_of_deliveries',
+            ]),
+
+            'delivery_fee' => $this->findColumn($normalized, [
+                'delivery_fee',
+                'delivery_fees',
+                'delivery_charge',
+                'delivery_charges',
+                'delivery_amount',
+                'service_fee',
             ]),
 
             'previous_dues' => $this->findColumn($normalized, [
@@ -1235,6 +1284,417 @@ class HistoricalImporterService
         }
 
         return $cell->getValue();
+    }
+
+
+    /**
+     * Build the operational subscription history for one customer.
+     *
+     * Output:
+     * - one plan per mapped product/variant
+     * - create/pause/resume/modify segments across Jan-Jun 2026
+     * - final segment remains open-ended so the normal daily-order command
+     *   can continue the live workflow after the historical period.
+     */
+    public function buildSubscriptionPlans(array $customer): array
+    {
+        $productDays = [];
+
+        foreach ($customer['months'] ?? [] as $month => $monthData) {
+            foreach ($monthData['rows'] ?? [] as $row) {
+                $mapping = $row['product_mapping'] ?? null;
+
+                if (!$mapping) {
+                    continue;
+                }
+
+                $productId = (int) $mapping['product_id'];
+                $variantId = (int) $mapping['variant_id'];
+                $productKey = $productId . ':' . $variantId;
+
+                $productDays[$productKey] ??= [
+                    'mapping' => $mapping,
+                    'source_rows' => [],
+                    'daily' => [],
+                ];
+
+                $productDays[$productKey]['source_rows'][] = [
+                    'month' => $month,
+                    'sheet' => $row['sheet'] ?? null,
+                    'excel_row' => $row['excel_row'] ?? null,
+                    'product_name' => $row['product_name'] ?? null,
+                ];
+
+                foreach ($row['daily_quantities'] ?? [] as $day => $qty) {
+                    $date = Carbon::createFromFormat(
+                        '!Y-m-d',
+                        sprintf('%s-%02d', $month, (int) $day)
+                    );
+
+                    $dateKey = $date->toDateString();
+
+                    /*
+                     * If the same product appears more than once on the same
+                     * customer/day, add the quantities instead of losing data.
+                     */
+                    $productDays[$productKey]['daily'][$dateKey] =
+                        round(
+                            (float) ($productDays[$productKey]['daily'][$dateKey] ?? 0)
+                                + max(0, (float) $qty),
+                            4
+                        );
+                }
+            }
+        }
+
+        $plans = [];
+
+        foreach ($productDays as $productKey => $productData) {
+            $dailyStates = [];
+
+            /*
+             * Build one continuous Jan 1-Jun 30 timeline.
+             * Missing product rows/days are treated as paused quantity 0.
+             */
+            for (
+                $date = Carbon::create(2026, 1, 1);
+                $date->lte(Carbon::create(2026, 6, 30));
+                $date->addDay()
+            ) {
+                $qty = round(
+                    (float) ($productData['daily'][$date->toDateString()] ?? 0),
+                    4
+                );
+
+                $dailyStates[] = [
+                    'date' => $date->copy(),
+                    'qty' => $qty,
+                    'flag' => $qty > 0 ? 1 : 0,
+                ];
+            }
+
+            $segments = $this->buildHistoricalSegments($dailyStates);
+
+            if (empty($segments)) {
+                continue;
+            }
+
+            $previousQty = null;
+
+            foreach ($segments as $index => &$segment) {
+                $segment['change_action'] = $this->determineHistoricalAction(
+                    $index,
+                    (float) $segment['qty'],
+                    $previousQty
+                );
+
+                $previousQty = (float) $segment['qty'];
+            }
+            unset($segment);
+
+            $plans[] = [
+                'key' => $productKey,
+                'mapping' => $productData['mapping'],
+                'source_rows' => $productData['source_rows'],
+                'segments' => $segments,
+            ];
+        }
+
+        return $plans;
+    }
+
+    /**
+     * Resolve the price that was valid on the segment start date.
+     * Falls back to the current variant price and then the workbook mapping.
+     */
+    public function resolveVariantPriceForHistoricalDate(
+        int $productId,
+        int $variantId,
+        Carbon $date,
+        ?float $fallback = null
+    ): ?float {
+        $dateTime = $date->copy()->endOfDay()->toDateTimeString();
+
+        $history = DB::table('variant_price_history')
+            ->where('product_id', $productId)
+            ->where('variant_id', $variantId)
+            ->where('effective_from', '<=', $dateTime)
+            ->where(function ($query) use ($dateTime) {
+                $query->whereNull('effective_to')
+                    ->orWhere('effective_to', '>=', $dateTime);
+            })
+            ->orderByDesc('effective_from')
+            ->first();
+
+        if ($history && $history->price !== null) {
+            return (float) $history->price;
+        }
+
+        $variant = DB::table('variants')
+            ->where('variant_id', $variantId)
+            ->first();
+
+        if ($variant && $variant->price !== null) {
+            return (float) $variant->price;
+        }
+
+        return $fallback;
+    }
+
+    private function buildHistoricalSegments(array $dailyStates): array
+    {
+        if (empty($dailyStates)) {
+            return [];
+        }
+
+        $firstPositiveIndex = null;
+
+        foreach ($dailyStates as $index => $day) {
+            if ((float) $day['qty'] > 0) {
+                $firstPositiveIndex = $index;
+                break;
+            }
+        }
+
+        /*
+         * A completely unused product does not create a DOI.
+         */
+        if ($firstPositiveIndex === null) {
+            return [];
+        }
+
+        $dailyStates = array_slice($dailyStates, $firstPositiveIndex);
+
+        $segments = $this->buildHistoricalPatternSegments($dailyStates);
+
+        return $this->splitHistoricalSegmentsByActualQty(
+            $segments,
+            $dailyStates
+        );
+    }
+
+    private function buildHistoricalPatternSegments(array $dailyStates): array
+    {
+        $segments = [];
+        $count = count($dailyStates);
+        $index = 0;
+
+        while ($index < $count) {
+            $currentFlag = (int) $dailyStates[$index]['flag'];
+
+            /*
+             * Pause run: 0 0 0 ...
+             */
+            if ($currentFlag === 0) {
+                $start = $dailyStates[$index]['date']->copy();
+                $endIndex = $index;
+
+                while (
+                    $endIndex + 1 < $count
+                    && (int) $dailyStates[$endIndex + 1]['flag'] === 0
+                ) {
+                    $endIndex++;
+                }
+
+                $segments[] = [
+                    'start_date' => $start,
+                    'end_date' => $dailyStates[$endIndex]['date']->copy(),
+                    'qty' => 0.0,
+                    'frequency_type' => null,
+                    'pattern_start_value' => null,
+                    'pattern_kind' => 'pause',
+                ];
+
+                $index = $endIndex + 1;
+                continue;
+            }
+
+            $start = $dailyStates[$index]['date']->copy();
+
+            /*
+             * Candidate daily run: 1 1 1 ...
+             */
+            $dailyEnd = $index;
+
+            while (
+                $dailyEnd + 1 < $count
+                && (int) $dailyStates[$dailyEnd + 1]['flag'] === 1
+            ) {
+                $dailyEnd++;
+            }
+
+            $dailyLength = $dailyEnd - $index + 1;
+
+            /*
+             * Candidate alternate run: 1 0 1 0 ...
+             */
+            $alternateEnd = $index;
+            $expected = 0;
+
+            while ($alternateEnd + 1 < $count) {
+                $nextFlag = (int) $dailyStates[$alternateEnd + 1]['flag'];
+
+                if ($nextFlag !== $expected) {
+                    break;
+                }
+
+                $alternateEnd++;
+                $expected = $expected === 1 ? 0 : 1;
+            }
+
+            $alternateLength = $alternateEnd - $index + 1;
+
+            if (
+                $alternateLength >= 2
+                && $alternateLength > $dailyLength
+            ) {
+                $segments[] = [
+                    'start_date' => $start,
+                    'end_date' => $dailyStates[$alternateEnd]['date']->copy(),
+                    'qty' => 1.0,
+                    'frequency_type' => 'alternate_days',
+                    'pattern_start_value' => 1,
+                    'pattern_kind' => 'alternate',
+                ];
+
+                $index = $alternateEnd + 1;
+                continue;
+            }
+
+            $segments[] = [
+                'start_date' => $start,
+                'end_date' => $dailyStates[$dailyEnd]['date']->copy(),
+                'qty' => 1.0,
+                'frequency_type' => 'daily',
+                'pattern_start_value' => 1,
+                'pattern_kind' => 'daily',
+            ];
+
+            $index = $dailyEnd + 1;
+        }
+
+        /*
+         * The final operational state stays open-ended:
+         * active => future daily orders continue
+         * paused => future daily orders remain stopped
+         */
+        if (!empty($segments)) {
+            $segments[count($segments) - 1]['end_date'] = null;
+        }
+
+        return $segments;
+    }
+
+    private function splitHistoricalSegmentsByActualQty(
+        array $segments,
+        array $dailyStates
+    ): array {
+        $result = [];
+        $dayMap = [];
+
+        foreach ($dailyStates as $day) {
+            $dayMap[$day['date']->toDateString()] = [
+                'qty' => (float) $day['qty'],
+                'flag' => (int) $day['flag'],
+            ];
+        }
+
+        foreach ($segments as $segment) {
+            if ((float) $segment['qty'] === 0.0) {
+                $result[] = $segment;
+                continue;
+            }
+
+            $start = $segment['start_date']->copy();
+            $end = $segment['end_date']
+                ? $segment['end_date']->copy()
+                : end($dailyStates)['date']->copy();
+
+            $currentStart = null;
+            $currentQty = null;
+            $lastIncludedDate = null;
+
+            for ($date = $start->copy(); $date->lte($end); $date->addDay()) {
+                $day = $dayMap[$date->toDateString()] ?? [
+                    'qty' => 0.0,
+                    'flag' => 0,
+                ];
+
+                if ((int) $day['flag'] === 0) {
+                    continue;
+                }
+
+                $actualQty = (float) $day['qty'];
+
+                if ($currentStart === null) {
+                    $currentStart = $date->copy();
+                    $currentQty = $actualQty;
+                    $lastIncludedDate = $date->copy();
+                    continue;
+                }
+
+                if ($actualQty !== $currentQty) {
+                    $result[] = [
+                        'start_date' => $currentStart->copy(),
+                        'end_date' => $lastIncludedDate->copy(),
+                        'qty' => $currentQty,
+                        'frequency_type' => $segment['frequency_type'],
+                        'pattern_start_value' =>
+                        $segment['pattern_start_value'] ?? null,
+                        'pattern_kind' =>
+                        $segment['pattern_kind'] ?? null,
+                    ];
+
+                    $currentStart = $date->copy();
+                    $currentQty = $actualQty;
+                }
+
+                $lastIncludedDate = $date->copy();
+            }
+
+            if ($currentStart !== null) {
+                $result[] = [
+                    'start_date' => $currentStart->copy(),
+                    'end_date' => $lastIncludedDate?->copy(),
+                    'qty' => $currentQty,
+                    'frequency_type' => $segment['frequency_type'],
+                    'pattern_start_value' =>
+                    $segment['pattern_start_value'] ?? null,
+                    'pattern_kind' =>
+                    $segment['pattern_kind'] ?? null,
+                ];
+            }
+        }
+
+        if (!empty($result) && !empty($segments)) {
+            $lastOriginal = end($segments);
+
+            if (($lastOriginal['end_date'] ?? null) === null) {
+                $result[count($result) - 1]['end_date'] = null;
+            }
+        }
+
+        return $result;
+    }
+
+    private function determineHistoricalAction(
+        int $index,
+        float $currentQty,
+        ?float $previousQty
+    ): string {
+        if ($index === 0) {
+            return 'create';
+        }
+
+        if ($currentQty == 0.0) {
+            return 'pause';
+        }
+
+        if ($previousQty == 0.0 && $currentQty > 0) {
+            return 'resume';
+        }
+
+        return 'modify';
     }
 
     private function mapHistoricalProduct(string $excelName): ?array

@@ -201,6 +201,131 @@ class MeController extends Controller
      * GET /api/my-work/orders?type=milk
      * - returns TODAY active items from draft_order_items for this delivery boy's zone
      */
+
+    private function resolveOrderDeliveryDetails(
+        $order,
+        $fallbackCustomer
+    ): array {
+        $snapshot = [];
+
+        if ($order) {
+            $rawSnapshot =
+                $order->shipping_address_json
+                ?? $order->shipping_address
+                ?? null;
+
+            if (is_array($rawSnapshot)) {
+                $snapshot = $rawSnapshot;
+            } elseif (is_string($rawSnapshot) && trim($rawSnapshot) !== '') {
+                $decoded = json_decode($rawSnapshot, true);
+
+                if (is_array($decoded)) {
+                    $snapshot = $decoded;
+                }
+            }
+        }
+
+        $receiverName = trim((string) (
+            $snapshot['receiver_name']
+            ?? $snapshot['name']
+            ?? $fallbackCustomer->customer_name
+            ?? 'Customer'
+        ));
+
+        $receiverPhone = trim((string) (
+            $snapshot['receiver_phone']
+            ?? $snapshot['phone']
+            ?? $fallbackCustomer->customer_phone
+            ?? ''
+        ));
+
+        $line1 = trim((string) (
+            $snapshot['line1']
+            ?? $snapshot['address1']
+            ?? $snapshot['address']
+            ?? ''
+        ));
+
+        $line2 = trim((string) (
+            $snapshot['line2']
+            ?? $snapshot['address2']
+            ?? ''
+        ));
+
+        $nagar = trim((string) (
+            $snapshot['nagar']
+            ?? $snapshot['area']
+            ?? ''
+        ));
+
+        $city = trim((string) (
+            $snapshot['city']
+            ?? ''
+        ));
+
+        $state = trim((string) (
+            $snapshot['state']
+            ?? $snapshot['province']
+            ?? ''
+        ));
+
+        $pincode = trim((string) (
+            $snapshot['pincode']
+            ?? $snapshot['zip']
+            ?? ''
+        ));
+
+        /*
+    |--------------------------------------------------------------------------
+    | Legacy fallback
+    |--------------------------------------------------------------------------
+    |
+    | Old orders may not yet have shipping_address_json.
+    | For those orders only, use users table values.
+    |
+    */
+
+        if ($line1 === '') {
+            $line1 = trim((string) (
+                $fallbackCustomer->address
+                ?? ''
+            ));
+        }
+
+        if ($nagar === '') {
+            $nagar = trim((string) (
+                $fallbackCustomer->nagar
+                ?? ''
+            ));
+        }
+
+        $addressParts = array_values(array_filter([
+            $line1,
+            $line2,
+        ], fn($value) => trim((string) $value) !== ''));
+
+        return [
+            'customer_name' => $receiverName !== ''
+                ? $receiverName
+                : 'Customer',
+
+            'customer_phone' => $receiverPhone,
+
+            'address' => implode(', ', $addressParts),
+
+            'nagar' => $nagar,
+
+            'city' => $city,
+
+            'state' => $state,
+
+            'pincode' => $pincode,
+
+            'address_id' => isset($snapshot['address_id'])
+                ? (int) $snapshot['address_id']
+                : null,
+        ];
+    }
     public function myWorkOrders(Request $request)
     {
         $user = $request->user();
@@ -279,6 +404,11 @@ class MeController extends Controller
         // ✅ accept both keys from flutter
         $requestedDate = $request->query('delivery_date') ?? $request->query('deliveryDate');
         $targetDate = $requestedDate ? Carbon::parse($requestedDate)->toDateString() : $today;
+        Log::info('MyWork Debug', [
+            'zoneId' => $zoneId,
+            'subscriptionTypeId' => $subTypeId,
+            'targetDate' => $targetDate,
+        ]);
         $baseRows = DB::table('draft_order_items as doi')
             ->join('draft_orders as do', 'do.id', '=', 'doi.draft_order_id')
             ->join('sub_change_requests as scr', 'scr.id', '=', 'do.change_request_id')
@@ -318,8 +448,19 @@ class MeController extends Controller
             ])
             ->get();
 
+        Log::info('BaseRows Debug', [
+            'count' => $baseRows->count(),
+            'customerIds' => $baseRows->pluck('customer_id')->all(),
+        ]);
+
         // ✅ Fetch today's order status for these customers (single query, no N+1)
         $customerIds = $baseRows->pluck('customer_id')->filter()->unique()->values()->all();
+
+        Log::info('Customer IDs Debug', [
+            'baseRows_count' => $baseRows->count(),
+            'customerIds_count' => count($customerIds),
+            'customerIds' => $customerIds,
+        ]);
 
         $requestedDate = $request->query('delivery_date') ?? $request->query('deliveryDate');
         $targetDate = $requestedDate ? Carbon::parse($requestedDate)->toDateString() : $today;
@@ -416,7 +557,15 @@ class MeController extends Controller
         $orderIds = [];
         if (!empty($customerIds)) {
             $todayOrders = Order::query()
-                ->select('id', 'customer_id', 'delivery_status')
+                ->select(
+                    'id',
+                    'customer_id',
+                    'draft_order_id',
+                    'delivery_status',
+                    'shipping_address_json',
+                    'shipping_address',
+                    'phone'
+                )
                 ->whereIn('customer_id', $customerIds)
                 ->whereDate('delivery_date', $targetDate)
                 ->orderByDesc('id')
@@ -491,7 +640,7 @@ class MeController extends Controller
         $customerMap = $baseRows->keyBy('draft_order_item_id');
 
         $items = DraftOrderItem::query()
-            ->with('product')
+            ->with(['product', 'variant'])
             ->whereIn('id', $ids)
             ->get()
             ->keyBy('id');
@@ -508,10 +657,16 @@ class MeController extends Controller
             $customerId   = (int) ($c->customer_id ?? 0);
             $to           = $todayOrdersMap->get($customerId);
 
+
             // ✅ If no order generated for target date, don't show customer/item in UI
             if (!$to) {
                 return null;
             }
+
+            $deliveryDetails = $this->resolveOrderDeliveryDetails(
+                $to,
+                $c
+            );
 
             $pendingDates = $pendingByCustomer[$customerId] ?? [];
 
@@ -535,18 +690,30 @@ class MeController extends Controller
                 'draft_order_id'      => (int) $item->draft_order_id,
 
                 'customer_id'         => $customerId,
-                'customer_name'       => $c->customer_name ?? 'Customer',
-                'customer_phone'      => $c->customer_phone ?? '',
+                'customer_name'       => $deliveryDetails['customer_name'],
+                'customer_phone'      => $deliveryDetails['customer_phone'],
                 'pending_dates'       => $pendingDates,
 
                 'today_order_id'      => $to ? (int) $to->id : 0,
                 'delivery_status'     => $to->delivery_status ?? 'pending',
 
-                'nagar'               => $c->nagar ?? '',
-                'address'             => $c->address ?? '',
+                'address_id'          => $deliveryDetails['address_id'],
+                'nagar'               => $deliveryDetails['nagar'],
+                'address'             => $deliveryDetails['address'],
+                'city'                => $deliveryDetails['city'],
+                'state'               => $deliveryDetails['state'],
+                'pincode'             => $deliveryDetails['pincode'],
 
-                'product_title'       => optional($item->product)->title ?? 'Product',
-                'image_url'           => optional($item->product)->img_src ?? '',
+                'product_title' => (
+                    optional($item->variant)->title &&
+                    optional($item->variant)->title !== 'Default Title'
+                )
+                    ? optional($item->variant)->title
+                    : (optional($item->product)->title ?? 'Product'),
+
+                'variant_title' => optional($item->variant)->title ?? '',
+
+                'image_url' => optional($item->product)->img_src ?? '',
 
                 'qty' => $oiQty,
                 'unit'                => $item->unit,
@@ -582,6 +749,11 @@ class MeController extends Controller
                 continue;
             }
 
+            $deliveryDetails = $this->resolveOrderDeliveryDetails(
+                $order,
+                $customerInfo
+            );
+
             $itemsForOrder = $orderItemsMap->get($order->id, collect());
 
             foreach ($itemsForOrder as $key => $oi) {
@@ -607,15 +779,19 @@ class MeController extends Controller
                     'draft_order_id'      => 0,
 
                     'customer_id'         => (int) $customerId,
-                    'customer_name'       => $customerInfo->customer_name ?? 'Customer',
-                    'customer_phone'      => $customerInfo->customer_phone ?? '',
+                    'customer_name'       => $deliveryDetails['customer_name'],
+                    'customer_phone'      => $deliveryDetails['customer_phone'],
                     'pending_dates'       => $pendingByCustomer[$customerId] ?? [],
 
                     'today_order_id'      => (int) $order->id,
                     'delivery_status'     => $order->delivery_status ?? 'pending',
 
-                    'nagar'               => $customerInfo->nagar ?? '',
-                    'address'             => $customerInfo->address ?? '',
+                    'address_id'          => $deliveryDetails['address_id'],
+                    'nagar'               => $deliveryDetails['nagar'],
+                    'address'             => $deliveryDetails['address'],
+                    'city'                => $deliveryDetails['city'],
+                    'state'               => $deliveryDetails['state'],
+                    'pincode'             => $deliveryDetails['pincode'],
 
                     'product_title'       => $oi->title ?? 'Product',
                     'image_url'           => $oi->image_url ?? '',
@@ -654,7 +830,7 @@ class MeController extends Controller
             'targetDate' => $targetDate,
             'customerIds_count' => count($customerIds),
             'has_11316' => in_array(11316, $customerIds, true),
-            'todayOrder_11316' => $todayOrders->firstWhere('customer_id', 11316),
+            // 'todayOrder_11316' => $todayOrders->firstWhere('customer_id', 11316),
         ]);
 
         return response()->json([

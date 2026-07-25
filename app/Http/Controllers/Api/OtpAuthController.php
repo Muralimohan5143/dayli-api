@@ -203,11 +203,35 @@ class OtpAuthController extends Controller
                 $user->assignRole('customer');
             }
         }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Normalise legacy customer name
+        |--------------------------------------------------------------------------
+        */
+
+        if (empty(trim((string) $user->name))) {
+            $existingName =
+                trim((string) $user->display_name) !== ''
+                ? trim((string) $user->display_name)
+                : trim((string) $user->first_name);
+
+            if ($existingName !== '') {
+                $user->name = $existingName;
+                $user->save();
+            }
+        }
         // 3️⃣ ISSUE SANCTUM TOKEN FOR THIS USER
         $token = $user->createToken('dayli-mobile')->plainTextToken;
 
 
-        // ✅ Check if profile is completed (name + default address exists)
+        /*
+        |--------------------------------------------------------------------------
+        | Resolve profile completion
+        |--------------------------------------------------------------------------
+        */
+
         $hasDefaultAddress = DB::table('addresses')
             ->where('addressable_type', User::class)
             ->where('addressable_id', $user->id)
@@ -216,26 +240,85 @@ class OtpAuthController extends Controller
             ->where('line1', '!=', '')
             ->exists();
 
-        $profileCompleted = !empty($user->name) && $hasDefaultAddress;
+        // Customer onboarding requires only name + gender.
+        // Email remains optional.
+        $customerProfileCompleted =
+            !empty(trim((string) $user->name)) &&
+            !empty(trim((string) $user->gender));
 
-        // ✅ User role (Spatie)
-        $role = method_exists($user, 'getRoleNames')
-            ? ($user->getRoleNames()->first() ?? null)
-            : null;
+        // Vendor/workman onboarding still requires basic details + address.
+        $serviceProfileCompleted =
+            !empty(trim((string) $user->name)) &&
+            !empty(trim((string) $user->gender)) &&
+            $hasDefaultAddress;
 
+        /*
+        |--------------------------------------------------------------------------
+        | Resolve real app role
+        |--------------------------------------------------------------------------
+        |
+        | A vendor/workman may also have the customer role.
+        | Therefore, never use getRoleNames()->first().
+        |
+        */
+
+        $roles = method_exists($user, 'getRoleNames')
+            ? $user->getRoleNames()
+            ->map(fn($role) => strtolower((string) $role))
+            ->values()
+            : collect(['customer']);
+
+        $workmanRole = $roles->first(
+            fn($role) => str_starts_with($role, 'workman')
+        );
+
+        $vendorRole = $roles->first(
+            fn($role) => str_starts_with($role, 'vendor')
+        );
+
+        if ($workmanRole) {
+            $resolvedRole = $workmanRole;
+        } elseif ($vendorRole) {
+            $resolvedRole = $vendorRole;
+        } else {
+            $resolvedRole = 'customer';
+        }
+
+        $isServiceUser =
+            str_starts_with($resolvedRole, 'vendor') ||
+            str_starts_with($resolvedRole, 'workman');
+
+        // Keep old key for compatibility.
+        $profileCompleted = $isServiceUser
+            ? $serviceProfileCompleted
+            : $customerProfileCompleted;
 
         return response()->json([
-            'token'        => $token,
-            'role'         => $role,
-            'roles' => method_exists($user, 'getRoleNames') ? $user->getRoleNames()->values() : [],
+            'token' => $token,
 
+            // Resolved role with service-role priority.
+            'role' => $resolvedRole,
+            'roles' => $roles,
+
+            'is_service_user' => $isServiceUser ? 1 : 0,
+
+            'customer_profile_completed' =>
+            $customerProfileCompleted ? 1 : 0,
+
+            'service_profile_completed' =>
+            $serviceProfileCompleted ? 1 : 0,
+
+            // Existing Flutter compatibility.
             'profile_completed' => $profileCompleted ? 1 : 0,
-            'user_id'      => $user->id,
-            'name'         => $user->display_name,
+
+            'user_id' => $user->id,
+            'name' => $user->name,
             'display_name' => $user->display_name,
-            'phone'        => $user->phone,
-            'pincode'      => $user->pincode,   // ✅ ADD
-            'zone_id'      => $user->zone_id,   // ✅ ADD
+            'gender' => $user->gender,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'pincode' => $user->pincode,
+            'zone_id' => $user->zone_id,
         ]);
     }
     public function logout(Request $request)

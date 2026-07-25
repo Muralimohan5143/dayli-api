@@ -483,6 +483,14 @@ class MySuppliesController extends Controller
                 if ($oi) $oiQty = (float) $oi->quantity;
             }
 
+            Log::info([
+                'draft_item'    => $item->id,
+                'product_id'    => $item->product_id,
+                'variant_id'    => $item->variant_id,
+                'variant_title' => optional($item->variant)->title,
+                'product_title' => optional($item->product)->title,
+            ]);
+
             return [
                 'draft_order_item_id' => (int) $item->id,
                 'draft_order_id'      => (int) $item->draft_order_id,

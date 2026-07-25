@@ -34,6 +34,8 @@ use App\Http\Controllers\Api\FoodMenuController;
 use App\Http\Controllers\Api\FoodRegimenController;
 use App\Http\Controllers\Api\HomeFoodOrderController;
 use App\Http\Controllers\Api\FoodMenuTodayController;
+use App\Http\Controllers\Api\MyDayFeedController;
+use App\Http\Controllers\Api\MobileAdController;
 
 
 
@@ -127,6 +129,21 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/operator/customers', [MeController::class, 'operatorCustomers']);
     Route::get('/operator/customer-subscriptions', [SubscriptionsApiController::class, 'operatorCustomerSubscriptions']);
     Route::post('/profile/service', [ProfileController::class, 'saveServiceProfile']);
+
+    Route::get('/mobile/profile', [ProfileController::class, 'getProfile']);
+
+    Route::put('/mobile/profile', [ProfileController::class, 'updateProfile']);
+
+
+    Route::get('/mobile/addresses', [ProfileController::class, 'getAddresses']);
+
+    Route::post('/mobile/addresses', [ProfileController::class, 'saveAddress']);
+
+    Route::put('/mobile/addresses/{id}', [ProfileController::class, 'updateAddress']);
+
+    Route::delete('/mobile/addresses/{id}', [ProfileController::class, 'deleteAddress']);
+
+    Route::post('/mobile/addresses/{id}/default', [ProfileController::class, 'makeDefaultAddress']);
 
     // =============================
     // DAYLI SERVICES
@@ -347,54 +364,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::post('/mobile/myday/vault/upload', [MobileMyDayVaultController::class, 'upload']);
 
-    Route::get('/mobile/myday/feed', function (MyDayFeedService $service) {
-
-        $rawKeys = request('keys', 'gita,health,fun_fact');
-
-        $allowedKeys = [
-            'weather',
-            'astro',
-            'quote',
-            'gita',
-            'story',
-            'movies',
-            'music',
-            'news',
-            'cricket',
-            'gold',
-            'silver',
-            'petrol',
-            'diesel',
-            'health',
-            'recipe',
-            'fun_fact',
-        ];
-
-        $keys = collect(explode(',', $rawKeys))
-            ->map(fn($key) => trim((string) $key))
-            ->filter(fn($key) => $key !== '' && in_array($key, $allowedKeys, true))
-            ->unique()
-            ->values();
-
-        $items = $keys->map(function ($key) use ($service) {
-            try {
-                return $service->makeFeedItem($key) + ['interest_key' => $key];
-            } catch (\Throwable $e) {
-                return [
-                    'interest_key' => $key,
-                    'title' => ucfirst(str_replace('_', ' ', $key)),
-                    'subtitle' => 'MyDay update',
-                    'body' => 'This update is temporarily unavailable.',
-                    'payload_json' => ['error' => $e->getMessage()],
-                ];
-            }
-        })->values();
-
-        return response()->json([
-            'success' => true,
-            'items' => $items,
-        ]);
-    });
+    Route::get('/mobile/myday/feed', [MyDayFeedController::class, 'index']);
 
     Route::get('/mobile/my-day/notes', [MyDayNoteController::class, 'index']);
     Route::post('/mobile/my-day/notes', [MyDayNoteController::class, 'store']);
@@ -419,6 +389,22 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/mobile/my-day/likes/options', [MyDayLikeController::class, 'options']);
     Route::get('/mobile/my-day/likes', [MyDayLikeController::class, 'index']);
     Route::post('/mobile/my-day/likes', [MyDayLikeController::class, 'save']);
+
+    // ==============================
+    // DAYLI ADS
+    // ==============================
+
+    Route::get('/mobile/ads', [MobileAdController::class, 'index']);
+
+    Route::post('/mobile/ads/{ad}/impression', [
+        MobileAdController::class,
+        'impression'
+    ]);
+
+    Route::post('/mobile/ads/{ad}/click', [
+        MobileAdController::class,
+        'click'
+    ]);
 
     // ----------------------------------
     // Home-made Food

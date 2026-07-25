@@ -21,7 +21,10 @@ class MobileMyDayController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
-        $city = $request->query('city', 'Nandyal');
+        $lat = $request->query('lat');
+        $lng = $request->query('lng');
+
+        $city = $request->query('city', 'Current Location');
         $today = Carbon::now('Asia/Kolkata');
 
         $greeting = $this->imageService->greetingImage($today);

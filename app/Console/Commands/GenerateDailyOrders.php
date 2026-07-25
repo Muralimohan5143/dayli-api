@@ -44,6 +44,7 @@ class GenerateDailyOrders extends Command
                 ->join('draft_orders as do', 'do.id', '=', 'doi.draft_order_id')
                 ->join('sub_change_requests as scr', 'scr.id', '=', 'do.change_request_id')
                 ->leftJoin('users as u', 'u.id', '=', 'scr.for_user_id')
+                ->leftJoin('addresses as a', 'a.id', '=', 'scr.address_id')
                 ->leftJoin('products as p', 'p.product_id', '=', 'doi.product_id')
                 ->leftJoin('variants as v', 'v.variant_id', '=', 'doi.variant_id')
                 ->where('doi.status', 'active')
@@ -62,6 +63,19 @@ class GenerateDailyOrders extends Command
                     'scr.party_type',
                     'u.display_name as actor_name',
                     'scr.zone_id as zone_id',
+                    'scr.address_id',
+
+                    'a.receiver_name',
+                    'a.receiver_phone',
+                    'a.line1',
+                    'a.line2',
+                    'a.nagar',
+                    'a.city',
+                    'a.state',
+                    'a.country',
+                    'a.pincode',
+                    'a.lat',
+                    'a.lng',
                     'do.id as draft_order_id',
                     'doi.id as doi_id',
                     'doi.product_id',
@@ -119,8 +133,10 @@ class GenerateDailyOrders extends Command
                 //     }
                 // }
 
-                $key = $item->party_type . '_' . $item->actor_id . '_' . $date;
-
+                $key = $item->party_type . '_' .
+                    $item->actor_id . '_' .
+                    $item->address_id . '_' .
+                    $date;
                 if (!isset($grouped[$key])) {
                     $grouped[$key] = [
                         'party_type' => $item->party_type,
@@ -177,6 +193,20 @@ class GenerateDailyOrders extends Command
                         'customer_id' => (int) $c['actor_id'],
                         'vendor_id'   => $c['party_type'] === 'supplier' ? (int) $c['actor_id'] : null,
                         'zone_id' => $c['zone_id'] ? (int) $c['zone_id'] : null,
+                        'shipping_address_json' => json_encode([
+                            'address_id'     => $c['items'][0]->address_id,
+                            'receiver_name'  => $c['items'][0]->receiver_name,
+                            'receiver_phone' => $c['items'][0]->receiver_phone,
+                            'line1'          => $c['items'][0]->line1,
+                            'line2'          => $c['items'][0]->line2,
+                            'nagar'          => $c['items'][0]->nagar,
+                            'city'           => $c['items'][0]->city,
+                            'state'          => $c['items'][0]->state,
+                            'country'        => $c['items'][0]->country,
+                            'pincode'        => $c['items'][0]->pincode,
+                            'lat'            => $c['items'][0]->lat,
+                            'lng'            => $c['items'][0]->lng,
+                        ]),
                         'delivery_date' => $date,
                         'delivery_status' => 'pending',
                         'draft_order_id' => $c['draft_order_id'] ? (int) $c['draft_order_id'] : null,

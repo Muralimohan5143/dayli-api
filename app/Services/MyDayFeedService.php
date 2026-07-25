@@ -10,10 +10,18 @@ class MyDayFeedService
     public function __construct(
         private readonly MyDayImageService $imageService,
     ) {}
-    public function makeFeedItem(string $key): array
-    {
+    public function makeFeedItem(
+        string $key,
+        ?float $latitude = null,
+        ?float $longitude = null,
+        ?string $city = null,
+    ): array {
         $item = match ($key) {
-            'weather' => $this->getWeather(),
+            'weather' => $this->getWeather(
+                $latitude,
+                $longitude,
+                $city,
+            ),
             'astro' => $this->getPanchang(),
             'quote' => $this->getQuote(),
             'gita' => $this->getGitaVerse(),
@@ -53,11 +61,15 @@ class MyDayFeedService
         ];
     }
 
-    public function getWeather(): array
-    {
-        $latitude = (float) env('MYDAY_LATITUDE', 15.4777);
-        $longitude = (float) env('MYDAY_LONGITUDE', 78.4836);
-        $city = env('MYDAY_CITY', 'Nandyal');
+    public function getWeather(
+        ?float $latitude = null,
+        ?float $longitude = null,
+        ?string $city = null,
+    ): array {
+
+        $latitude ??= (float) env('MYDAY_LATITUDE', 15.4777);
+        $longitude ??= (float) env('MYDAY_LONGITUDE', 78.4836);
+        $city ??= 'Current Location';
 
         try {
             $response = Http::connectTimeout(3)

@@ -27,6 +27,7 @@ class SubChangeRequest extends Model
         'draft_order_id',
         'zone_id',
         'subscription_type_id',
+        'address_id',
         'subscription_subtype_id',
         'subtypes_json',
         'frequency_type',

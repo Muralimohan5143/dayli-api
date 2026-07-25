@@ -13,6 +13,8 @@ class Address extends Model
         'addressable_type',
         'addressable_id',
         'label',
+        'receiver_name',
+        'receiver_phone',
         'line1',
         'line2',
         'city',

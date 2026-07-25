@@ -23,6 +23,7 @@ class ZoneApiController extends Controller
 
         $lat = (float) $lat;
         $lng = (float) $lng;
+        $city = $this->reverseGeocodeToCity($lat, $lng);
 
         if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) {
             return response()->json(['message' => 'Invalid lat/lng values'], 422);
@@ -40,6 +41,7 @@ class ZoneApiController extends Controller
                     'zone_id'   => $zone->id,
                     'zone_code' => $zone->code,
                     'zone_name' => $zone->name,
+                    'city' => $city,
                     'pincode'   => $pincode,
                     'source'    => 'pincode',
                 ]);
@@ -76,6 +78,7 @@ class ZoneApiController extends Controller
             'zone_id' => $zone->id,
             'zone_code' => $zone->code,
             'zone_name' => $zone->name,
+            'city' => $city,
             'pincode' => $pincode,
             'source' => 'focal_fallback',
             'note' => $pincode ? null : 'Google did not return postal_code for this point',
@@ -144,5 +147,31 @@ class ZoneApiController extends Controller
 
         // No postal code found in results
         return null;
+    }
+
+    protected function reverseGeocodeToCity(float $lat, float $lng): ?string
+    {
+        $res = Http::withHeaders([
+            'User-Agent' => 'Dayli/1.0'
+        ])->get(
+            'https://nominatim.openstreetmap.org/reverse',
+            [
+                'lat' => $lat,
+                'lon' => $lng,
+                'format' => 'json',
+            ]
+        );
+
+        if (!$res->successful()) {
+            return null;
+        }
+
+        $address = $res->json('address');
+
+        return $address['city']
+            ?? $address['town']
+            ?? $address['county']
+            ?? $address['state_district']
+            ?? null;
     }
 }

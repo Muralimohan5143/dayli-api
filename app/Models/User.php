@@ -129,11 +129,11 @@ class User extends Authenticatable
         return $this->morphMany(Address::class, 'addressable')->latest();
     }
 
-    public function primaryAddress()
+    public function defaultAddress()
     {
-        return $this->morphOne(Address::class, 'addressable')->where('is_default', true);
+        return $this->morphOne(Address::class, 'addressable')
+            ->where('is_default', true);
     }
-
     public function zone()
     {
         return $this->belongsTo(Zone::class);
@@ -141,9 +141,9 @@ class User extends Authenticatable
 
     public function currentZone(): ?Zone
     {
-        return optional($this->primaryAddress)->zone ?? ($this->zone ?? null);
+        return optional($this->defaultAddress)->zone
+            ?? ($this->zone ?? null);
     }
-
     public function changeRequests()
     {
         return $this->hasMany(SubChangeRequest::class, 'customer_id');

@@ -69,6 +69,12 @@ class SubscriptionSelectionController extends Controller
             'customer_id' => ['nullable', 'integer', 'exists:users,id'],
             'party_type' => ['required', 'in:consumer,supplier'],
 
+            'address_id' => [
+                'nullable',
+                'integer',
+                'exists:addresses,id',
+            ],
+
             'items'                        => ['required', 'array', 'min:1'],
             'items.*.subscription_type_id' => ['required', 'integer'],
             'items.*.sub_type_id'          => ['required', 'integer'],
@@ -87,9 +93,12 @@ class SubscriptionSelectionController extends Controller
             'items.*.start_date'           => ['nullable', 'date'],
             'items.*.end_date'             => ['nullable', 'date'],
         ]);
-
         $items = collect($data['items']);
-        $partType = $data['party_type']; // ✅ comes from Flutter
+        $partType = $data['party_type'];
+
+        $addressId = isset($data['address_id'])
+            ? (int) $data['address_id']
+            : null;
 
 
         $defaultFrequency = 'daily';
@@ -186,6 +195,7 @@ class SubscriptionSelectionController extends Controller
                     ->latest('id')
                     ->first();
                 if ($scr) {
+                    $scr->address_id = $addressId;
 
                     $existing = json_decode($scr->subtypes_json ?? '[]', true);
                     if (!is_array($existing)) $existing = [];
@@ -234,6 +244,7 @@ class SubscriptionSelectionController extends Controller
                         'draft_order_id'         => null,
                         'zone_id'                => $zoneId,
                         'subscription_type_id'   => $subscriptionTypeId,
+                        'address_id' => $addressId,
                         'subtypes_json'          => json_encode(['selected_sub_type_ids' => $subTypeIds]),
                         'invoice_cycle'          => 'monthly',
                         'change_reason'          => $targetUserId === (int) $user->id ? 'self_service' : 'operator_assisted',
