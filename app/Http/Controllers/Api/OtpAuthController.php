@@ -232,13 +232,15 @@ class OtpAuthController extends Controller
         |--------------------------------------------------------------------------
         */
 
-        $hasDefaultAddress = DB::table('addresses')
+        $defaultAddress = DB::table('addresses')
             ->where('addressable_type', User::class)
             ->where('addressable_id', $user->id)
             ->where('is_default', 1)
-            ->whereNotNull('line1')
-            ->where('line1', '!=', '')
-            ->exists();
+            ->first();
+
+        $hasDefaultAddress =
+            $defaultAddress !== null &&
+            !empty(trim((string) $defaultAddress->line1));
 
         // Customer onboarding requires only name + gender.
         // Email remains optional.
@@ -319,6 +321,21 @@ class OtpAuthController extends Controller
             'phone' => $user->phone,
             'pincode' => $user->pincode,
             'zone_id' => $user->zone_id,
+
+            // Existing service profile values for Flutter autofill
+            'address' => collect([
+                $defaultAddress?->line1,
+                $defaultAddress?->line2,
+                $defaultAddress?->nagar,
+                $defaultAddress?->city,
+                $defaultAddress?->state,
+                $defaultAddress?->pincode,
+                $defaultAddress?->country,
+            ])->filter(fn($value) => !empty(trim((string) $value)))
+                ->implode(', '),
+
+            'latitude' => $defaultAddress?->lat,
+            'longitude' => $defaultAddress?->lng,
         ]);
     }
     public function logout(Request $request)
