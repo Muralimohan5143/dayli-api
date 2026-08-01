@@ -5,10 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\DraftOrderItem;
 use App\Models\OutboxEvent;
-use App\Models\Product;
 use App\Models\SubChangeRequest;
 use App\Models\User;
-use App\Models\UserService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -60,8 +58,14 @@ class NoOrderDeliveryController extends Controller
                 ],
             ],
             'transportation_impacts' => [
-                ['key' => 'full_zone', 'label' => 'Full Zone'],
-                ['key' => 'selected_items', 'label' => 'Selected Items'],
+                [
+                    'key' => 'full_zone',
+                    'label' => 'Full Zone',
+                ],
+                [
+                    'key' => 'selected_items',
+                    'label' => 'Selected Items',
+                ],
             ],
         ]);
     }
@@ -77,19 +81,19 @@ class NoOrderDeliveryController extends Controller
             ->where('status', DraftOrderItem::STATUS_ACTIVE)
             ->whereHas('draftOrder', function ($q) use ($validated) {
                 $q->whereHas('changeRequest', function ($cr) use ($validated) {
-                    $cr->where('subscription_type_id', $validated['subscription_type_id'])
-                        ->whereIn('status', ['approved', 'active']);
+                    $cr->where(
+                        'subscription_type_id',
+                        $validated['subscription_type_id']
+                    )->whereIn('status', ['approved', 'active']);
                 });
             })
             ->whereNotNull('variant_id')
             ->get()
             ->map(function ($item) {
-                $variantTitle = optional($item->variant)->title;
-
                 return [
                     'product_id' => $item->product_id,
                     'variant_id' => $item->variant_id,
-                    'name' => $variantTitle,
+                    'name' => optional($item->variant)->title,
                 ];
             })
             ->unique('variant_id')
@@ -112,8 +116,10 @@ class NoOrderDeliveryController extends Controller
             ->where('status', DraftOrderItem::STATUS_ACTIVE)
             ->whereHas('draftOrder', function ($q) use ($validated) {
                 $q->whereHas('changeRequest', function ($cr) use ($validated) {
-                    $cr->where('subscription_type_id', $validated['subscription_type_id'])
-                        ->whereIn('status', ['approved', 'active']);
+                    $cr->where(
+                        'subscription_type_id',
+                        $validated['subscription_type_id']
+                    )->whereIn('status', ['approved', 'active']);
                 });
             })
             ->distinct()
@@ -121,13 +127,22 @@ class NoOrderDeliveryController extends Controller
 
         $vendors = User::query()
             ->whereIn('id', $vendorIds)
-            ->select('id', 'first_name', 'last_name', 'display_name', 'phone')
+            ->select(
+                'id',
+                'first_name',
+                'last_name',
+                'display_name',
+                'phone'
+            )
             ->get()
             ->map(function ($user) {
                 return [
-                    'id' => $user->id,
+                    'id' => (int) $user->id,
                     'name' => $user->display_name
-                        ?: trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? ''))
+                        ?: trim(
+                            ($user->first_name ?? '') . ' ' .
+                                ($user->last_name ?? '')
+                        )
                         ?: ($user->phone ?? 'Vendor #' . $user->id),
                 ];
             })
@@ -152,19 +167,19 @@ class NoOrderDeliveryController extends Controller
             ->where('status', DraftOrderItem::STATUS_ACTIVE)
             ->whereHas('draftOrder', function ($q) use ($validated) {
                 $q->whereHas('changeRequest', function ($cr) use ($validated) {
-                    $cr->where('subscription_type_id', $validated['subscription_type_id'])
-                        ->whereIn('status', ['approved', 'active']);
+                    $cr->where(
+                        'subscription_type_id',
+                        $validated['subscription_type_id']
+                    )->whereIn('status', ['approved', 'active']);
                 });
             })
             ->whereNotNull('variant_id')
             ->get()
             ->map(function ($item) {
-                $variantTitle = optional($item->variant)->title;
-
                 return [
                     'product_id' => $item->product_id,
                     'variant_id' => $item->variant_id,
-                    'name' => $variantTitle,
+                    'name' => optional($item->variant)->title,
                 ];
             })
             ->unique('variant_id')
@@ -183,29 +198,100 @@ class NoOrderDeliveryController extends Controller
             'zone_id' => 'nullable|integer',
         ]);
 
-        $execs = UserService::query()
-            ->with('user')
-            ->where('role_name', 'workman')
-            ->where('service_handle', 'delivery-boy')
-            ->where('subscription_type_id', $validated['subscription_type_id'])
-            ->where('status', 'approved')
-            ->where('is_active', true)
-            ->when($request->filled('zone_id'), function ($q) use ($validated) {
-                $q->where('zone_id', $validated['zone_id']);
-            })
-            ->get()
-            ->map(function ($service) {
-                $user = $service->user;
+        $subscriptionType = DB::table('subscription_types')
+            ->where('id', $validated['subscription_type_id'])
+            ->first();
 
+        if (!$subscriptionType) {
+            return response()->json([
+                'success' => true,
+                'delivery_execs' => [],
+            ]);
+        }
+
+        $search = strtolower(trim(
+            implode(' ', array_filter([
+                $subscriptionType->name ?? null,
+                $subscriptionType->slug ?? null,
+            ]))
+        ));
+
+        $serviceVariantSku = match (true) {
+            str_contains($search, 'milk') =>
+            'SERVICE-DELIVERY-MILK',
+
+            str_contains($search, 'vegetable'),
+            str_contains($search, 'veg') =>
+            'SERVICE-DELIVERY-VEGETABLE',
+
+            str_contains($search, 'fruit') =>
+            'SERVICE-DELIVERY-FRUIT',
+
+            str_contains($search, 'grocery') =>
+            'SERVICE-DELIVERY-GROCERY',
+
+            str_contains($search, 'medicine'),
+            str_contains($search, 'medical'),
+            str_contains($search, 'pharma') =>
+            'SERVICE-DELIVERY-MEDICINE',
+
+            default => null,
+        };
+
+        if (!$serviceVariantSku) {
+            return response()->json([
+                'success' => true,
+                'delivery_execs' => [],
+            ]);
+        }
+
+        $execs = DB::table('workman_zone_services as wzs')
+            ->join(
+                'service_variants as sv',
+                'sv.variant_id',
+                '=',
+                'wzs.service_variant_id'
+            )
+            ->join(
+                'users as u',
+                'u.id',
+                '=',
+                'wzs.workman_id'
+            )
+            ->where('sv.sku', $serviceVariantSku)
+            ->where('wzs.status', 'approved')
+            ->where('wzs.is_active', true)
+            ->when(
+                $request->filled('zone_id'),
+                function ($query) use ($validated) {
+                    $query->where(
+                        'wzs.zone_id',
+                        $validated['zone_id']
+                    );
+                }
+            )
+            ->select(
+                'u.id',
+                'u.first_name',
+                'u.last_name',
+                'u.display_name',
+                'u.phone',
+                'wzs.zone_id'
+            )
+            ->orderBy('u.display_name')
+            ->get()
+            ->map(function ($row) {
                 return [
-                    'id' => $user?->id,
-                    'name' => $user?->display_name
-                        ?: trim(($user?->first_name ?? '') . ' ' . ($user?->last_name ?? ''))
-                        ?: ($user?->phone ?? 'Delivery Exec #' . $service->user_id),
-                    'zone_id' => $service->zone_id,
+                    'id' => (int) $row->id,
+                    'name' => $row->display_name
+                        ?: trim(
+                            ($row->first_name ?? '') . ' ' .
+                                ($row->last_name ?? '')
+                        )
+                        ?: ($row->phone ?? 'Delivery Exec #' . $row->id),
+                    'zone_id' => (int) $row->zone_id,
                 ];
             })
-            ->filter(fn($row) => !empty($row['id']))
             ->values();
 
         return response()->json([
@@ -249,9 +335,9 @@ class NoOrderDeliveryController extends Controller
             'status' => 'pending',
             'payload' => [
                 'zone_id' => $validated['zone_id'],
-                'subscription_type_id' => $validated['subscription_type_id'],
+                'subscription_type_id' =>
+                $validated['subscription_type_id'],
 
-                // keep old key for existing handlers
                 'delivery_date' => $validated['from_date'],
 
                 'from_date' => $validated['from_date'],
@@ -263,15 +349,20 @@ class NoOrderDeliveryController extends Controller
 
                 'scope_label' => $validated['scope_label'],
 
-                // one Interakt template
-                'template_key' => $validated['template_key'] ?? 'no_milk_2',
+                'template_key' =>
+                $validated['template_key'] ?? 'no_milk_2',
 
                 'vendor_id' => $request->input('vendor_id'),
-                'delivery_exec_id' => $request->input('delivery_exec_id'),
-                'impact_level' => $request->input('impact_level'),
+                'delivery_exec_id' =>
+                $request->input('delivery_exec_id'),
+                'impact_level' =>
+                $request->input('impact_level'),
 
-                'product_ids' => $request->input('product_ids', []),
-                'variant_ids' => $request->input('variant_ids', []),
+                'product_ids' =>
+                $request->input('product_ids', []),
+
+                'variant_ids' =>
+                $request->input('variant_ids', []),
             ],
             'scheduled_at' => now(),
         ]);

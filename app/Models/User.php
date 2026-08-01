@@ -149,23 +149,23 @@ class User extends Authenticatable
         return $this->hasMany(SubChangeRequest::class, 'customer_id');
     }
 
-    public function zonesServed()
-    {
-        return $this->belongsToMany(Zone::class, 'vendor_zone_subscr', 'vendor_id', 'zone_id')
-            ->withPivot(['subscr_type_id', 'status', 'is_preferred', 'lead_time_mins', 'meta'])
-            ->withTimestamps();
-    }
+    // public function zonesServed()
+    // {
+    //     return $this->belongsToMany(Zone::class, 'vendor_zone_subscr', 'vendor_id', 'zone_id')
+    //         ->withPivot(['subscr_type_id', 'status', 'is_preferred', 'lead_time_mins', 'meta'])
+    //         ->withTimestamps();
+    // }
 
-    public function subscriptionTypesServed()
-    {
-        return $this->belongsToMany(
-            SubscriptionType::class,
-            'vendor_zone_subscr',
-            'vendor_id',
-            'subscr_type_id'
-        )->withPivot(['zone_id', 'status', 'is_preferred', 'lead_time_mins', 'meta'])
-            ->withTimestamps();
-    }
+    // public function subscriptionTypesServed()
+    // {
+    //     return $this->belongsToMany(
+    //         SubscriptionType::class,
+    //         'vendor_zone_subscr',
+    //         'vendor_id',
+    //         'subscr_type_id'
+    //     )->withPivot(['zone_id', 'status', 'is_preferred', 'lead_time_mins', 'meta'])
+    //         ->withTimestamps();
+    // }
 
     /* ------------------- Accessor / Mutator for "contact" -------------------- */
     public function getContactAttribute(): ?string
@@ -185,27 +185,9 @@ class User extends Authenticatable
             $this->phone = preg_replace('/[^\d+]/', '', $value);
         }
     }
-    public function userServices()
-    {
-        return $this->hasMany(\App\Models\UserService::class);
-    }
 
-    public function approvedUserServices()
-    {
-        return $this->hasMany(\App\Models\UserService::class)->where('status', 'approved');
-    }
 
-    public function hasApprovedService(string $roleName, ?string $serviceHandle = null): bool
-    {
-        return $this->userServices()
-            ->where('role_name', $roleName)
-            ->when($serviceHandle !== null, function ($q) use ($serviceHandle) {
-                $q->where('service_handle', $serviceHandle);
-            })
-            ->where('status', 'approved')
-            ->where('is_active', true)
-            ->exists();
-    }
+
 
     public function myDayLikes()
     {
@@ -227,17 +209,159 @@ class User extends Authenticatable
         return $this->hasMany(MyDayRoutine::class);
     }
 
-    public function getApprovedService(?string $roleName = null, ?string $serviceHandle = null)
+    public function vendorZoneServices()
     {
-        return $this->userServices()
-            ->when($roleName !== null, function ($q) use ($roleName) {
-                $q->where('role_name', $roleName);
-            })
-            ->when($serviceHandle !== null, function ($q) use ($serviceHandle) {
-                $q->where('service_handle', $serviceHandle);
-            })
+        return $this->hasMany(
+            \App\Models\VendorZoneService::class,
+            'vendor_id'
+        );
+    }
+
+    public function workmanZoneServices()
+    {
+        return $this->hasMany(
+            \App\Models\WorkmanZoneService::class,
+            'workman_id'
+        );
+    }
+
+    public function approvedVendorZoneServices()
+    {
+        return $this->vendorZoneServices()
             ->where('status', 'approved')
-            ->where('is_active', true)
+            ->where('is_active', true);
+    }
+
+    public function approvedWorkmanZoneServices()
+    {
+        return $this->workmanZoneServices()
+            ->where('status', 'approved')
+            ->where('is_active', true);
+    }
+
+    public function hasApprovedService(
+        string $roleName,
+        ?string $serviceHandle = null
+    ): bool {
+        if (!in_array($roleName, ['vendor', 'workman'], true)) {
+            return false;
+        }
+
+        $relation = $roleName === 'vendor'
+            ? $this->vendorZoneServices()
+            : $this->workmanZoneServices();
+
+        $query = $relation
+            ->where('status', 'approved')
+            ->where('is_active', true);
+
+        if ($serviceHandle !== null && trim($serviceHandle) !== '') {
+            $serviceHandle = strtolower(trim($serviceHandle));
+
+            $query->whereHas(
+                'serviceVariant',
+                function ($variantQuery) use ($serviceHandle) {
+                    if (in_array($serviceHandle, [
+                        'workman-delivery-boy',
+                        'delivery-boy',
+                        'milk',
+                        'milk-supplier',
+                        'milk-and-dairy',
+                        'milk-delivery',
+                    ], true)) {
+                        $variantQuery->where(
+                            'sku',
+                            'SERVICE-DELIVERY-MILK'
+                        );
+
+                        return;
+                    }
+
+                    $variantQuery
+                        ->where('sku', $serviceHandle)
+                        ->orWhereRaw(
+                            "JSON_UNQUOTE(JSON_EXTRACT(meta, '$.handle')) = ?",
+                            [$serviceHandle]
+                        )
+                        ->orWhereHas(
+                            'service',
+                            function ($serviceQuery) use ($serviceHandle) {
+                                $serviceQuery->where(
+                                    'handle',
+                                    $serviceHandle
+                                );
+                            }
+                        );
+                }
+            );
+        }
+
+        return $query->exists();
+    }
+
+    public function getApprovedService(
+        ?string $roleName = null,
+        ?string $serviceHandle = null
+    ) {
+        if (!in_array($roleName, ['vendor', 'workman'], true)) {
+            return null;
+        }
+
+        $relation = $roleName === 'vendor'
+            ? $this->vendorZoneServices()
+            : $this->workmanZoneServices();
+
+        $query = $relation
+            ->with([
+                'serviceVariant.service',
+                'documents',
+                'approver',
+            ])
+            ->where('status', 'approved')
+            ->where('is_active', true);
+
+        if ($serviceHandle !== null && trim($serviceHandle) !== '') {
+            $serviceHandle = strtolower(trim($serviceHandle));
+
+            $query->whereHas(
+                'serviceVariant',
+                function ($variantQuery) use ($serviceHandle) {
+                    if (in_array($serviceHandle, [
+                        'workman-delivery-boy',
+                        'delivery-boy',
+                        'milk',
+                        'milk-supplier',
+                        'milk-and-dairy',
+                        'milk-delivery',
+                    ], true)) {
+                        $variantQuery->where(
+                            'sku',
+                            'SERVICE-DELIVERY-MILK'
+                        );
+
+                        return;
+                    }
+
+                    $variantQuery
+                        ->where('sku', $serviceHandle)
+                        ->orWhereRaw(
+                            "JSON_UNQUOTE(JSON_EXTRACT(meta, '$.handle')) = ?",
+                            [$serviceHandle]
+                        )
+                        ->orWhereHas(
+                            'service',
+                            function ($serviceQuery) use ($serviceHandle) {
+                                $serviceQuery->where(
+                                    'handle',
+                                    $serviceHandle
+                                );
+                            }
+                        );
+                }
+            );
+        }
+
+        return $query
             ->latest('id')
             ->first();
     }

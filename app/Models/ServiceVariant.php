@@ -32,4 +32,22 @@ class ServiceVariant extends Model
     {
         return $this->belongsTo(Service::class, 'service_id', 'service_id');
     }
+
+    public function vendorZoneServices()
+    {
+        return $this->hasMany(
+            VendorZoneService::class,
+            'service_variant_id',
+            'variant_id'
+        );
+    }
+
+    public function workmanZoneServices()
+    {
+        return $this->hasMany(
+            WorkmanZoneService::class,
+            'service_variant_id',
+            'variant_id'
+        );
+    }
 }

@@ -208,9 +208,26 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/my-user-services', [UserServiceController::class, 'myServices']);
 
     Route::prefix('user-services')->group(function () {
-        Route::post('/apply', [UserServiceController::class, 'apply']);
-        Route::post('/{userServiceId}/documents', [UserServiceController::class, 'uploadDocument']);
-        Route::get('/{userServiceId}', [UserServiceController::class, 'show']);
+        Route::post('/apply', [
+            UserServiceController::class,
+            'apply'
+        ]);
+
+        Route::get('/{type}/{applicationId}', [
+            UserServiceController::class,
+            'show'
+        ])->whereIn('type', ['vendor', 'workman']);
+
+        // Document route will be updated in the next step.
+        Route::post('/{type}/{applicationId}/documents', [
+            UserServiceController::class,
+            'uploadDocument'
+        ])->whereIn('type', ['vendor', 'workman']);
+
+        Route::post('/{type}/{applicationId}/resubmit', [
+            UserServiceController::class,
+            'resubmit'
+        ])->whereIn('type', ['vendor', 'workman']);
     });
 
     Route::delete('/user-service-documents/{documentId}', [UserServiceController::class, 'deleteDocument']);
@@ -472,8 +489,14 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/admin/user-services', [UserServiceController::class, 'index']);
     Route::get('/admin/user-services/pending-approvals', [UserServiceController::class, 'pendingApprovals']);
-    Route::post('/admin/user-services/{userServiceId}/approve', [UserServiceController::class, 'approve']);
-    Route::post('/admin/user-services/{userServiceId}/reject', [UserServiceController::class, 'reject']);
+    Route::post(
+        '/admin/user-services/{type}/{applicationId}/approve',
+        [UserServiceController::class, 'approve']
+    )->whereIn('type', ['vendor', 'workman']);
+    Route::post(
+        '/admin/user-services/{type}/{applicationId}/reject',
+        [UserServiceController::class, 'reject']
+    )->whereIn('type', ['vendor', 'workman']);
 });
 
 

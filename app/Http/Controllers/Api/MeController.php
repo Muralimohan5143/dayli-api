@@ -65,20 +65,80 @@ class MeController extends Controller
         }
 
 
-        $userServices = DB::table('user_services')
-            ->where('user_id', $user->id)
-            ->select(
-                'id',
-                'role_name',
-                'service_handle',
-                'subscription_type_id',
-                'zone_id',
-                'status',
-                'approved_by',
-                'approved_at'
+        $vendorServices = DB::table('vendor_zone_services as vzs')
+            ->join(
+                'service_variants as sv',
+                'sv.variant_id',
+                '=',
+                'vzs.service_variant_id'
             )
-            ->orderByDesc('id')
+            ->join(
+                'services as s',
+                's.service_id',
+                '=',
+                'sv.service_id'
+            )
+            ->where('vzs.vendor_id', $user->id)
+            ->select(
+                'vzs.id',
+                DB::raw("'vendor' as role_name"),
+                'vzs.vendor_id as user_id',
+                'vzs.zone_id',
+                'vzs.service_variant_id',
+                'sv.title as service_variant_title',
+                'sv.sku as service_variant_sku',
+                's.title as service_title',
+                's.handle as service_handle',
+                'vzs.status',
+                'vzs.is_active',
+                'vzs.approved_by',
+                'vzs.approved_at',
+                'vzs.rejection_reason',
+                'vzs.meta',
+                'vzs.created_at',
+                'vzs.updated_at'
+            )
             ->get();
+
+        $workmanServices = DB::table('workman_zone_services as wzs')
+            ->join(
+                'service_variants as sv',
+                'sv.variant_id',
+                '=',
+                'wzs.service_variant_id'
+            )
+            ->join(
+                'services as s',
+                's.service_id',
+                '=',
+                'sv.service_id'
+            )
+            ->where('wzs.workman_id', $user->id)
+            ->select(
+                'wzs.id',
+                DB::raw("'workman' as role_name"),
+                'wzs.workman_id as user_id',
+                'wzs.zone_id',
+                'wzs.service_variant_id',
+                'sv.title as service_variant_title',
+                'sv.sku as service_variant_sku',
+                's.title as service_title',
+                's.handle as service_handle',
+                'wzs.status',
+                'wzs.is_active',
+                'wzs.approved_by',
+                'wzs.approved_at',
+                'wzs.rejection_reason',
+                'wzs.meta',
+                'wzs.created_at',
+                'wzs.updated_at'
+            )
+            ->get();
+
+        $userServices = $vendorServices
+            ->concat($workmanServices)
+            ->sortByDesc('id')
+            ->values();
         return response()->json([
             'id'      => $user->id,
             'name'    => $user->name ?? null,
@@ -90,15 +150,73 @@ class MeController extends Controller
     }
 
 
-    private function approvedDeliveryServiceForUser(int $userId, int $subscriptionTypeId)
-    {
-        return DB::table('user_services')
-            ->where('user_id', $userId)
-            ->where('role_name', 'workman')
-            ->where('service_handle', 'workman-delivery-boy')
-            ->where('subscription_type_id', $subscriptionTypeId)
-            ->where('status', 'approved')
-            ->orderByDesc('id')
+    private function approvedDeliveryServiceForUser(
+        int $userId,
+        int $subscriptionTypeId
+    ) {
+        $subscriptionType = DB::table('subscription_types')
+            ->where('id', $subscriptionTypeId)
+            ->first();
+
+        if (!$subscriptionType) {
+            return null;
+        }
+
+        $search = strtolower(trim(
+            implode(' ', array_filter([
+                $subscriptionType->name ?? null,
+                $subscriptionType->slug ?? null,
+            ]))
+        ));
+
+        $serviceVariantSku = match (true) {
+            str_contains($search, 'milk') =>
+            'SERVICE-DELIVERY-MILK',
+
+            str_contains($search, 'vegetable'),
+            str_contains($search, 'veg') =>
+            'SERVICE-DELIVERY-VEGETABLE',
+
+            str_contains($search, 'fruit') =>
+            'SERVICE-DELIVERY-FRUIT',
+
+            str_contains($search, 'grocery') =>
+            'SERVICE-DELIVERY-GROCERY',
+
+            str_contains($search, 'medicine'),
+            str_contains($search, 'medical'),
+            str_contains($search, 'pharma') =>
+            'SERVICE-DELIVERY-MEDICINE',
+
+            default => null,
+        };
+
+        if (!$serviceVariantSku) {
+            return null;
+        }
+
+        return DB::table('workman_zone_services as wzs')
+            ->join(
+                'service_variants as sv',
+                'sv.variant_id',
+                '=',
+                'wzs.service_variant_id'
+            )
+            ->where('wzs.workman_id', $userId)
+            ->where('sv.sku', $serviceVariantSku)
+            ->where('wzs.status', 'approved')
+            ->where('wzs.is_active', true)
+            ->select(
+                'wzs.id',
+                'wzs.workman_id as user_id',
+                'wzs.zone_id',
+                'wzs.service_variant_id',
+                'wzs.status',
+                'wzs.is_active',
+                'sv.sku as service_variant_sku',
+                'sv.title as service_variant_title'
+            )
+            ->orderByDesc('wzs.id')
             ->first();
     }
 
@@ -846,29 +964,55 @@ class MeController extends Controller
     public function myWorkSubscriptionTypes(Request $request)
     {
         $user = $request->user();
+
         if (!$user) {
-            return response()->json(['message' => 'Unauthenticated'], 401);
+            return response()->json([
+                'message' => 'Unauthenticated'
+            ], 401);
         }
 
-        $types = DB::table('user_services as us')
-            ->join('subscription_types as st', 'st.id', '=', 'us.subscription_type_id')
-            ->where('us.user_id', $user->id)
-            ->where('us.status', 'approved')
-            ->where(function ($q) {
-                $q->where(function ($qq) {
-                    $qq->where('us.role_name', 'workman')
-                        ->where('us.service_handle', 'workman-delivery-boy');
-                })->orWhere(function ($qq) {
-                    $qq->where('us.role_name', 'vendor');
-                });
+        $types = DB::table('workman_zone_services as wzs')
+            ->join(
+                'service_variants as sv',
+                'sv.variant_id',
+                '=',
+                'wzs.service_variant_id'
+            )
+            ->where('wzs.workman_id', $user->id)
+            ->where('wzs.status', 'approved')
+            ->where('wzs.is_active', true)
+            ->whereIn('sv.sku', [
+                'SERVICE-DELIVERY-MILK',
+                'SERVICE-DELIVERY-VEGETABLE',
+                'SERVICE-DELIVERY-FRUIT',
+                'SERVICE-DELIVERY-GROCERY',
+                'SERVICE-DELIVERY-MEDICINE',
+            ])
+            ->select(
+                'sv.variant_id as id',
+                'sv.title as name',
+                'sv.sku',
+                'sv.meta'
+            )
+            ->orderBy('sv.title')
+            ->get()
+            ->map(function ($row) {
+                $meta = is_array($row->meta)
+                    ? $row->meta
+                    : json_decode($row->meta ?? '{}', true);
+
+                return [
+                    'id' => (int) $row->id,
+                    'name' => $row->name,
+                    'slug' => $meta['handle'] ?? null,
+                    'sku' => $row->sku,
+                    'img_src' => null,
+                ];
             })
-            ->select('st.id', 'st.name', 'st.slug', 'st.img_src')
-            ->distinct()
-            ->orderBy('st.name')
-            ->get();
+            ->values();
 
         return response()->json([
-            'data' => $types
+            'data' => $types,
         ]);
     }
     public function getAddItemProducts(Request $request)
