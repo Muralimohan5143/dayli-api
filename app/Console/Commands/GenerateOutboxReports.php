@@ -150,7 +150,19 @@ class GenerateOutboxReports extends Command
                 continue;
             }
 
-            $zoneManagerId = 11306;
+            $zoneManagerId = DB::table('users')
+                ->join('model_has_roles', 'users.id', '=', 'model_has_roles.model_id')
+                ->join('roles', 'roles.id', '=', 'model_has_roles.role_id')
+                ->where('roles.name', 'zone-manager')
+                ->value('users.id');
+
+            if (!$zoneManagerId) {
+                $skipped++;
+                $this->warn(
+                    "Skipped | No active zone manager found for zone={$zoneId}"
+                );
+                continue;
+            }
 
             $attributes = [
                 'zone_manager_id' => (int) $zoneManagerId,

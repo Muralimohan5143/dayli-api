@@ -116,7 +116,15 @@ class OutboxReportController extends Controller
                 );
             }
 
-            $grandTotal = round($subtotal + $deliveryFee, 2);
+            $previousDues = $this->computePreviousDues(
+                (int) $customerId,
+                $start
+            );
+
+            $grandTotal = round(
+                $subtotal + $deliveryFee + $previousDues,
+                2
+            );
 
             return [
                 'customer_id' => (int) $customerId,
@@ -134,7 +142,8 @@ class OutboxReportController extends Controller
                     ];
                 })->values(),
                 'subtotal' => $subtotal,
-                'delivery_fee' => $deliveryFee,
+                'previous_due' => $previousDues,
+                'delivery_fee' => round($deliveryFee, 2),
                 'grand_total' => $grandTotal,
             ];
         })->values();
@@ -223,6 +232,26 @@ class OutboxReportController extends Controller
         }
 
         return round((float) $result, 2);
+    }
+
+    private function computePreviousDues(int $userId, string $monthStart): float
+    {
+        $invSum = (float) DB::table('invoices')
+            ->where('user_id', $userId)
+            ->whereNotNull('invoice_date')
+            ->where('invoice_date', '<', $monthStart)
+            ->sum('grand_total');
+
+        $paySum = (float) DB::table('inward_payments as p')
+            ->leftJoin('invoices as i', 'i.id', '=', 'p.invoice_id')
+            ->where('i.user_id', $userId)
+            ->where(function ($q) use ($monthStart) {
+                $q->whereNull('p.payment_date')
+                    ->orWhere('p.payment_date', '<', $monthStart);
+            })
+            ->sum('p.amount');
+
+        return max(0, round($invSum - $paySum, 2));
     }
 
     public function generate(Request $request, int $id, InvoiceGeneratorService $service)

@@ -39,9 +39,9 @@ class Kernel extends ConsoleKernel
             $schedule->command('migrate:fresh --seed')->cron($scheduledInterval);
             $schedule->command('image:seed')->cron($scheduledInterval);
         }
-        // ✅ Production: auto-create daily pending orders at 5:00 AM
+        // ✅ Production: auto-create daily pending orders at 7:00 AM
         $schedule->command('dayli:generate-daily-orders')
-            ->dailyAt('05:00')
+            ->dailyAt('22:30')
             ->withoutOverlapping(60)
             ->runInBackground();
 

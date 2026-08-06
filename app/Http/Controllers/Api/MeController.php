@@ -967,11 +967,11 @@ class MeController extends Controller
 
         if (!$user) {
             return response()->json([
-                'message' => 'Unauthenticated'
+                'message' => 'Unauthenticated',
             ], 401);
         }
 
-        $types = DB::table('workman_zone_services as wzs')
+        $approvedVariants = DB::table('workman_zone_services as wzs')
             ->join(
                 'service_variants as sv',
                 'sv.variant_id',
@@ -989,26 +989,50 @@ class MeController extends Controller
                 'SERVICE-DELIVERY-MEDICINE',
             ])
             ->select(
-                'sv.variant_id as id',
-                'sv.title as name',
+                'sv.variant_id',
+                'sv.title',
                 'sv.sku',
                 'sv.meta'
             )
             ->orderBy('sv.title')
-            ->get()
-            ->map(function ($row) {
-                $meta = is_array($row->meta)
-                    ? $row->meta
-                    : json_decode($row->meta ?? '{}', true);
+            ->get();
+
+        $types = $approvedVariants
+            ->map(function ($variant) {
+                $meta = is_array($variant->meta)
+                    ? $variant->meta
+                    : json_decode($variant->meta ?? '{}', true);
+
+                $subscriptionTypeSlug =
+                    $meta['subscription_type_slug'] ?? null;
+
+                if (!$subscriptionTypeSlug) {
+                    return null;
+                }
+
+                $subscriptionType = DB::table('subscription_types')
+                    ->where('slug', $subscriptionTypeSlug)
+                    ->first();
+
+                if (!$subscriptionType) {
+                    return null;
+                }
 
                 return [
-                    'id' => (int) $row->id,
-                    'name' => $row->name,
-                    'slug' => $meta['handle'] ?? null,
-                    'sku' => $row->sku,
+                    // Operational ID used by orders/subscriptions
+                    'id' => (int) $subscriptionType->id,
+
+                    // Display name shown in Flutter
+                    'name' => $variant->title,
+
+                    // Useful mapping information
+                    'slug' => $subscriptionTypeSlug,
+                    'service_variant_id' => (int) $variant->variant_id,
+                    'sku' => $variant->sku,
                     'img_src' => null,
                 ];
             })
+            ->filter()
             ->values();
 
         return response()->json([

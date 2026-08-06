@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 use App\Models\Service;
 use App\Models\ServiceVariant;
 use App\Models\ProviderService;
@@ -32,18 +33,55 @@ class MobileController extends Controller
     // Fetch service types
     public function getServiceTypes(Request $request)
     {
-        $serviceTypes = DB::table('services')
+        $request->validate([
+            'role' => [
+                'nullable',
+                'string',
+                Rule::in([
+                    'vendor',
+                    'workman',
+                ]),
+            ],
+        ]);
+
+        $role = $request->query('role');
+
+        $query = DB::table('services')
             ->select(
                 'service_id as id',
+                'service_id',
                 'title as name',
-                'handle'
+                'title',
+                'service_type',
+                'handle',
+                'description',
+                'category',
+                'img_src',
+                'meta'
             )
-            ->where('is_active', 1)
+            ->where('is_active', 1);
+
+        if ($role === 'vendor') {
+            $query->whereIn('service_type', [
+                'vendor',
+                'common',
+            ]);
+        }
+
+        if ($role === 'workman') {
+            $query->whereIn('service_type', [
+                'workman',
+                'common',
+            ]);
+        }
+
+        $serviceTypes = $query
+            ->orderBy('title')
             ->get();
 
         return response()->json([
             'status' => true,
-            'data'   => $serviceTypes,
+            'data' => $serviceTypes,
         ]);
     }
 
