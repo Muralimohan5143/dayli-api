@@ -111,7 +111,7 @@ oi.product_id as product_id,
                 'payment_status' => 'unpaid',
                 'gst_status' => 'unfiled',
                 'subtotal' => round($subtotal, 2),
-                'Unpaid_dues' => round($previousDues, 2),
+                'Unpaid_dues' => $grandTotal,
                 'tax' => 0,
                 'tax_total' => 0,
                 'discount' => 0,
@@ -126,6 +126,7 @@ oi.product_id as product_id,
                     'zone_id' => $zoneId,
                     'subscription_type_id' => $subscriptionTypeId,
                     'billing_phone' => $u?->phone,
+                    'previous_due' => round($previousDues, 2),
                 ]),
                 'updated_at' => now(),
             ];
@@ -244,22 +245,41 @@ oi.product_id as product_id,
 
     private function computePreviousDues(int $userId, string $monthStart): float
     {
-        $invSum = (float) DB::table('invoices')
+        $previousInvoice = DB::table('invoices')
             ->where('user_id', $userId)
             ->whereNotNull('invoice_date')
             ->where('invoice_date', '<', $monthStart)
-            ->sum('grand_total');
+            ->orderByDesc('invoice_date')
+            ->orderByDesc('id')
+            ->first();
 
-        $paySum = (float) DB::table('inward_payments as p')
-            ->leftJoin('invoices as i', 'i.id', '=', 'p.invoice_id')
-            ->where('i.user_id', $userId)
-            ->where(function ($q) use ($monthStart) {
-                $q->whereNull('p.payment_date')
-                    ->orWhere('p.payment_date', '<', $monthStart);
-            })
-            ->sum('p.amount');
+        if (!$previousInvoice) {
+            return 0.0;
+        }
 
-        return max(0, round($invSum - $paySum, 2));
+        // Historical imported invoices already contain the correct
+        // closing due from the source sheet.
+        $meta = json_decode($previousInvoice->meta ?? '{}', true);
+
+        if (
+            !empty($meta['historical_import']) &&
+            array_key_exists('sheet_closing_dues', $meta)
+        ) {
+            return max(
+                0,
+                round((float) $meta['sheet_closing_dues'], 2)
+            );
+        }
+
+        // For newly generated invoices, unpaid balance is stored here.
+        if (($previousInvoice->payment_status ?? null) === 'paid') {
+            return 0.0;
+        }
+
+        return max(
+            0,
+            round((float) ($previousInvoice->Unpaid_dues ?? 0), 2)
+        );
     }
 
     private function pickName($u): string

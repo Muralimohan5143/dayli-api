@@ -74,53 +74,115 @@ class AdminBillingController extends Controller
     public function userUnpaid(Request $request)
     {
         $userId = (int) $request->query('user_id', 0);
-        if ($userId <= 0) return response()->json(['message' => 'user_id required'], 422);
+
+        if ($userId <= 0) {
+            return response()->json(['message' => 'user_id required'], 422);
+        }
 
         $u = DB::table('users')
-            ->select('id', DB::raw('COALESCE(display_name, name, "") as name'), 'phone', 'address', 'nagar', 'pincode')
+            ->select(
+                'id',
+                DB::raw('COALESCE(display_name, name, "") as name'),
+                'phone',
+                'address',
+                'nagar',
+                'pincode'
+            )
             ->where('id', $userId)
             ->first();
 
-        if (!$u) return response()->json(['message' => 'User not found'], 404);
+        if (!$u) {
+            return response()->json(['message' => 'User not found'], 404);
+        }
 
-        // ✅ Only invoices that actually have due > 0
-        $invoices = DB::table('invoices')
+        /*
+     * IMPORTANT:
+     * Historical milk invoices use carry-forward balances.
+     * So Jan, Feb, Mar... must NOT all be collected separately.
+     *
+     * The latest invoice represents the customer's current balance.
+     */
+        $latestInvoice = DB::table('invoices')
             ->whereNull('deleted_at')
             ->where('user_id', $userId)
-            ->whereIn('payment_status', ['unpaid', 'partial'])
             ->where('grand_total', '>', 0)
-            ->orderBy('invoice_date', 'desc')
-            ->limit(50)
-            ->get()
-            ->map(function ($i) {
-                $invoiceNo = $i->invoice_number ?: ($i->number ?: ('INV-' . str_pad((string)$i->id, 6, '0', STR_PAD_LEFT)));
+            ->orderByDesc('invoice_date')
+            ->orderByDesc('id')
+            ->first();
 
-                $grand = (float) ($i->grand_total ?? 0);
-                $due   = (float) ($i->Unpaid_dues ?? 0);
+        $invoices = collect();
 
-                // ✅ your rule: only unpaid_dues matters, but old data can be 0
-                // so treat due as grand_total if invoice is unpaid/partial and unpaid_dues is 0
-                if ($due <= 0) $due = $grand;
+        if ($latestInvoice) {
+            $meta = json_decode($latestInvoice->meta ?? '{}', true);
 
-                return [
-                    'id' => (int) $i->id,
-                    'user_id' => $i->user_id ? (int)$i->user_id : null,
+            $isHistorical = !empty($meta['historical_import']);
+
+            if (
+                $isHistorical &&
+                array_key_exists('sheet_closing_dues', $meta)
+            ) {
+                // Historical sheet: closing due is the real balance
+                $due = max(
+                    0,
+                    (float) $meta['sheet_closing_dues']
+                );
+            } else {
+                // New generated invoices
+                if (($latestInvoice->payment_status ?? '') === 'paid') {
+                    $due = 0;
+                } else {
+                    $due = (float) ($latestInvoice->grand_total ?? 0);
+
+                    if (
+                        isset($latestInvoice->Unpaid_dues) &&
+                        (float) $latestInvoice->Unpaid_dues > 0
+                    ) {
+                        $due = (float) $latestInvoice->Unpaid_dues;
+                    }
+                }
+            }
+
+            if ($due > 0) {
+                $invoiceNo =
+                    $latestInvoice->invoice_number
+                    ?: ($latestInvoice->number
+                        ?: ('INV-' . str_pad(
+                            (string) $latestInvoice->id,
+                            6,
+                            '0',
+                            STR_PAD_LEFT
+                        )));
+
+                $invoices->push([
+                    'id' => (int) $latestInvoice->id,
+                    'user_id' => $latestInvoice->user_id
+                        ? (int) $latestInvoice->user_id
+                        : null,
                     'invoice_no' => (string) $invoiceNo,
-                    'invoice_date' => (string) ($i->invoice_date ?? ''),
-                    'order_start_date' => (string) ($i->order_start_date ?? ''),
-                    'order_end_date' => (string) ($i->order_end_date ?? ''),
-                    'grand_total' => $grand,
-                    'due_amount' => max($due, 0),
-                    'payment_status' => (string) ($i->payment_status ?? 'unpaid'),
-                ];
-            });
-
+                    'invoice_date' => (string) ($latestInvoice->invoice_date ?? ''),
+                    'order_start_date' => (string) ($latestInvoice->order_start_date ?? ''),
+                    'order_end_date' => (string) ($latestInvoice->order_end_date ?? ''),
+                    'grand_total' => (float) ($latestInvoice->grand_total ?? 0),
+                    'due_amount' => round($due, 2),
+                    'unpaid_dues' => round($due, 2),
+                    'payment_status' => $due > 0
+                        ? 'partial'
+                        : 'paid',
+                ]);
+            }
+        }
 
         $dueTotal = (float) $invoices->sum('due_amount');
 
-        $address = trim((string)($u->address ?? ''));
-        if (($u->nagar ?? '') !== '') $address = trim($address . ' ' . $u->nagar);
-        if (($u->pincode ?? '') !== '') $address = trim($address . ' ' . $u->pincode);
+        $address = trim((string) ($u->address ?? ''));
+
+        if (($u->nagar ?? '') !== '') {
+            $address = trim($address . ' ' . $u->nagar);
+        }
+
+        if (($u->pincode ?? '') !== '') {
+            $address = trim($address . ' ' . $u->pincode);
+        }
 
         return response()->json([
             'customer' => [
@@ -136,7 +198,6 @@ class AdminBillingController extends Controller
             'invoices' => $invoices->values(),
         ]);
     }
-
 
 
     private function _derivePaymentStatus(float $grand, float $due): string
@@ -336,7 +397,7 @@ class AdminBillingController extends Controller
         try {
             // insert inward payment
             $pid = DB::table('inward_payments')->insertGetId([
-                'order_id'      => $inv->order_id,
+                'order_id'      => null,
                 'invoice_id'    => $invoiceId,
                 'payment_date'  => $date,
                 'amount'        => $amount,
@@ -446,7 +507,7 @@ class AdminBillingController extends Controller
 
                 // store inward payment allocation row
                 $pid = DB::table('inward_payments')->insertGetId([
-                    'order_id'      => (int) ($inv->order_id ?? 0),
+                    'order_id'      => null,
                     'invoice_id'    => $invoiceId,
                     'payment_date'  => $date,
                     'amount'        => $payNow,
@@ -508,68 +569,103 @@ class AdminBillingController extends Controller
     {
         $userId = (int) $request->input('user_id');
         $amount = (float) $request->input('amount');
-        $date   = (string) $request->input('payment_date'); // YYYY-MM-DD
+        $date   = (string) $request->input('payment_date');
         $method = (string) $request->input('method', 'cash');
         $note   = (string) $request->input('note', '');
 
         $allocs = $request->input('allocations');
 
-        if ($userId <= 0) return response()->json(['message' => 'user_id required'], 422);
-        if ($amount <= 0) return response()->json(['message' => 'amount must be > 0'], 422);
-        if ($date === '') return response()->json(['message' => 'payment_date required'], 422);
+        if ($userId <= 0) {
+            return response()->json(['message' => 'user_id required'], 422);
+        }
+
+        if ($amount <= 0) {
+            return response()->json(['message' => 'amount must be > 0'], 422);
+        }
+
+        if ($date === '') {
+            return response()->json(['message' => 'payment_date required'], 422);
+        }
+
         if (!is_array($allocs) || count($allocs) === 0) {
             return response()->json(['message' => 'allocations required'], 422);
         }
 
-        return DB::transaction(function () use ($userId, $amount, $date, $method, $note, $allocs) {
+        return DB::transaction(function () use (
+            $userId,
+            $amount,
+            $date,
+            $method,
+            $note,
+            $allocs,
+            $request
+        ) {
+
+            // 1. Store FULL amount actually received from customer.
+            $paymentId = DB::table('payments')->insertGetId([
+                'party_type'   => 'customer',
+                'party_id'     => $userId,
+                'direction'    => 'in',
+                'received_at'  => $date . ' 00:00:00',
+                'method'       => $method,
+                'reference_no' => null,
+                'amount'       => $amount,
+                'status'       => 'posted',
+                'created_by'   => optional($request->user())->id,
+                'meta'         => json_encode([
+                    'source' => 'invoice_allocation',
+                ]),
+                'created_at'   => now(),
+                'updated_at'   => now(),
+            ]);
 
             $remaining = $amount;
+            $allocatedTotal = 0.0;
             $results = [];
 
             foreach ($allocs as $row) {
-                if ($remaining <= 0) break;
+                if ($remaining <= 0) {
+                    break;
+                }
 
                 $invoiceId = (int) ($row['invoice_id'] ?? 0);
                 $wantPay   = (float) ($row['amount'] ?? 0);
 
-                if ($invoiceId <= 0 || $wantPay <= 0) continue;
+                if ($invoiceId <= 0 || $wantPay <= 0) {
+                    continue;
+                }
 
-                // lock invoice
                 $inv = DB::table('invoices')
                     ->where('id', $invoiceId)
                     ->whereNull('deleted_at')
                     ->lockForUpdate()
                     ->first();
 
-                if (!$inv) continue;
-
-                // safety: must belong to same user
-                if ((int)($inv->user_id ?? 0) !== $userId) continue;
-
-                $grand = (float) ($inv->grand_total ?? 0);
-
-                // if grand_total 0 => mark paid and skip
-                if ($grand <= 0) {
-                    DB::table('invoices')->where('id', $invoiceId)->update([
-                        'Unpaid_dues'    => 0,
-                        'payment_status' => 'paid',
-                        'updated_at'     => now(),
-                    ]);
+                if (!$inv) {
                     continue;
                 }
 
-                // due calc (same rule you already used)
-                $due = (float) ($inv->Unpaid_dues ?? 0);
-                if ($due <= 0) $due = $grand;
-                if ($due <= 0) continue;
+                // Invoice must belong to selected customer.
+                if ((int) ($inv->user_id ?? 0) !== $userId) {
+                    continue;
+                }
 
-                // cannot exceed remaining + cannot exceed due
+                $grand = (float) ($inv->grand_total ?? 0);
+                $due   = (float) ($inv->Unpaid_dues ?? 0);
+
+                if ($grand <= 0 || $due <= 0) {
+                    continue;
+                }
+
+                // Never allocate more than invoice due.
                 $payNow = min($wantPay, $remaining, $due);
-                if ($payNow <= 0) continue;
+
+                if ($payNow <= 0) {
+                    continue;
+                }
 
                 $newDue = max($due - $payNow, 0);
 
-                // derive status
                 if ($newDue <= 0.0001) {
                     $status = 'paid';
                 } elseif ($newDue < $grand) {
@@ -578,46 +674,57 @@ class AdminBillingController extends Controller
                     $status = 'unpaid';
                 }
 
-                // create inward payment row (only on submit)
-                $pid = DB::table('inward_payments')->insertGetId([
-                    'order_id'      => (int) ($inv->order_id ?? 0),
-                    'invoice_id'    => $invoiceId,
-                    'payment_date'  => $date,
-                    'amount'        => $payNow,
-                    'due_amount'    => $newDue,
-                    'currency'      => $inv->currency ?? 'INR',
-                    'method'        => $method,
-                    'note'          => ($note !== '' ? $note : null),
-                    'created_at'    => now(),
-                    'updated_at'    => now(),
+                // 2. Link this receipt to this invoice.
+                DB::table('payment_allocations')->insert([
+                    'payment_id'          => $paymentId,
+                    'inward_payment_id'   => null,
+                    'invoice_id'          => $invoiceId,
+                    'allocatable_type'    => 'invoice',
+                    'allocatable_id'      => $invoiceId,
+                    'amount_applied'      => $payNow,
+                    'allocated_amount'    => $payNow,
+                    'is_final_allocation' => $newDue <= 0.0001 ? 1 : 0,
+                    'note'                => $note !== '' ? $note : null,
+                    'created_at'          => now(),
+                    'updated_at'          => now(),
                 ]);
 
-                // update invoice
-                DB::table('invoices')->where('id', $invoiceId)->update([
+                // 3. Update invoice balance.
+                $invoiceUpdate = [
                     'Unpaid_dues'    => $newDue,
                     'payment_status' => $status,
                     'updated_at'     => now(),
-                ]);
-
-                $results[] = [
-                    'payment_id' => (int) $pid,
-                    'invoice_id' => $invoiceId,
-                    'paid'       => (float) $payNow,
-                    'old_due'    => (float) $due,
-                    'new_due'    => (float) $newDue,
-                    'payment_status' => $status,
                 ];
 
+                if ($status === 'paid') {
+                    $invoiceUpdate['status'] = 'paid';
+                }
+
+                DB::table('invoices')
+                    ->where('id', $invoiceId)
+                    ->update($invoiceUpdate);
+
+                $allocatedTotal += $payNow;
                 $remaining -= $payNow;
+
+                $results[] = [
+                    'payment_id'     => $paymentId,
+                    'invoice_id'     => $invoiceId,
+                    'paid'           => $payNow,
+                    'old_due'        => $due,
+                    'new_due'        => $newDue,
+                    'payment_status' => $status,
+                ];
             }
 
             return response()->json([
-                'ok' => true,
-                'user_id' => $userId,
-                'requested_amount' => (float) $amount,
-                'allocated_amount' => (float) ($amount - max($remaining, 0)),
-                'remaining_amount' => (float) max($remaining, 0),
-                'allocations' => $results,
+                'ok'               => true,
+                'user_id'          => $userId,
+                'payment_id'       => $paymentId,
+                'received_amount'  => round($amount, 2),
+                'allocated_amount' => round($allocatedTotal, 2),
+                'credit_amount'    => round(max($remaining, 0), 2),
+                'allocations'      => $results,
             ]);
         });
     }

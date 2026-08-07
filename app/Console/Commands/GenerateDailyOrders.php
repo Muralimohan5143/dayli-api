@@ -358,7 +358,7 @@ class GenerateDailyOrders extends Command
             return $dates;
         }
 
-        return [Carbon::today()->toDateString()];
+        return [Carbon::now('Asia/Kolkata')->toDateString()];
     }
 
     protected function writeLog(string $message): void

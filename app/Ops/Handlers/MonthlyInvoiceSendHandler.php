@@ -34,7 +34,6 @@ class MonthlyInvoiceSendHandler implements EventHandler
         $end = Carbon::parse($report->end_date)->toDateString();
 
         $customers = DB::table('invoices as inv')
-            ->join('orders as o', 'o.id', '=', 'inv.order_id')
             ->leftJoin('users as u', 'u.id', '=', 'inv.user_id')
             ->select(
                 'inv.user_id as customer_id',
@@ -45,7 +44,10 @@ class MonthlyInvoiceSendHandler implements EventHandler
                 DB::raw('SUM(inv.total) as total_amount'),
                 DB::raw('SUM(inv.grand_total) as grand_total')
             )
-            ->where('o.zone_id', $zoneId)
+            ->whereRaw(
+                "JSON_UNQUOTE(JSON_EXTRACT(inv.meta, '$.zone_id')) = ?",
+                [(string) $zoneId]
+            )
             ->whereDate('inv.order_start_date', '>=', $start)
             ->whereDate('inv.order_end_date', '<=', $end)
             ->whereRaw(

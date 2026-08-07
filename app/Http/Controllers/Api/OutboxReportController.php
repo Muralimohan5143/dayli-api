@@ -236,24 +236,42 @@ class OutboxReportController extends Controller
 
     private function computePreviousDues(int $userId, string $monthStart): float
     {
-        $invSum = (float) DB::table('invoices')
+        $previousInvoice = DB::table('invoices')
             ->where('user_id', $userId)
             ->whereNotNull('invoice_date')
             ->where('invoice_date', '<', $monthStart)
-            ->sum('grand_total');
+            ->orderByDesc('invoice_date')
+            ->orderByDesc('id')
+            ->first();
 
-        $paySum = (float) DB::table('inward_payments as p')
-            ->leftJoin('invoices as i', 'i.id', '=', 'p.invoice_id')
-            ->where('i.user_id', $userId)
-            ->where(function ($q) use ($monthStart) {
-                $q->whereNull('p.payment_date')
-                    ->orWhere('p.payment_date', '<', $monthStart);
-            })
-            ->sum('p.amount');
+        if (!$previousInvoice) {
+            return 0.0;
+        }
 
-        return max(0, round($invSum - $paySum, 2));
+        // Historical imported invoices already contain the correct
+        // closing due from the source sheet.
+        $meta = json_decode($previousInvoice->meta ?? '{}', true);
+
+        if (
+            !empty($meta['historical_import']) &&
+            array_key_exists('sheet_closing_dues', $meta)
+        ) {
+            return max(
+                0,
+                round((float) $meta['sheet_closing_dues'], 2)
+            );
+        }
+
+        // For newly generated invoices, unpaid balance is stored here.
+        if (($previousInvoice->payment_status ?? null) === 'paid') {
+            return 0.0;
+        }
+
+        return max(
+            0,
+            round((float) ($previousInvoice->grand_total ?? 0), 2)
+        );
     }
-
     public function generate(Request $request, int $id, InvoiceGeneratorService $service)
     {
         $user = $request->user();
@@ -401,10 +419,8 @@ class OutboxReportController extends Controller
         $subscriptionTypeId = (int) $request->query('subscription_type_id', 0);
 
         $query = DB::table('invoices as i')
-            ->join('orders as o', 'o.id', '=', 'i.order_id')
             ->select(
                 'i.id',
-                'i.order_id',
                 'i.user_id',
                 'i.order_type',
                 'i.order_start_date',
@@ -415,9 +431,11 @@ class OutboxReportController extends Controller
                 'i.status',
                 'i.payment_status',
                 'i.subtotal',
+                'i.Unpaid_dues',
                 'i.delivery_fee',
                 'i.total',
                 'i.grand_total',
+                'i.meta',
                 'i.created_at'
             )
             ->where('i.user_id', $user->id);
@@ -453,6 +471,7 @@ class OutboxReportController extends Controller
                     'i.delivery_fee',
                     'i.total',
                     'i.grand_total',
+                    'i.meta',
                     'i.created_at'
                 );
         }
@@ -460,7 +479,61 @@ class OutboxReportController extends Controller
         $rows = $query
             ->orderByDesc('i.invoice_date')
             ->orderByDesc('i.id')
-            ->get();
+            ->get()
+            ->map(function ($row) {
+                $meta = json_decode($row->meta ?? '{}', true);
+
+                if (!empty($meta['historical_import'])) {
+                    // Historical Jan-Jun invoices
+
+                    // Opening / previous due for that month
+                    $row->previous_due = round(
+                        (float) ($row->Unpaid_dues ?? 0),
+                        2
+                    );
+
+                    // Actual amount paid from historical Excel
+                    $row->paid_amount = round(
+                        (float) ($meta['sheet_amount_paid'] ?? 0),
+                        2
+                    );
+
+                    // Closing due after payment
+                    // Example June Sreenu: 1261 - 1058 = 203
+                    $row->current_due = max(
+                        0,
+                        round(
+                            (float) ($row->grand_total ?? 0) - $row->paid_amount,
+                            2
+                        )
+                    );
+                } else {
+                    // New invoices - July onwards
+
+                    $row->previous_due = round(
+                        (float) ($meta['previous_due'] ?? 0),
+                        2
+                    );
+
+                    // Actual amount allocated from new payments ledger
+                    $row->paid_amount = round(
+                        (float) DB::table('payment_allocations')
+                            ->where('invoice_id', $row->id)
+                            ->sum('amount_applied'),
+                        2
+                    );
+
+                    // New invoices already maintain live remaining balance here
+                    $row->current_due = max(
+                        0,
+                        round((float) ($row->Unpaid_dues ?? 0), 2)
+                    );
+                }
+
+                unset($row->meta);
+
+                return $row;
+            });
 
         return response()->json([
             'ok' => true,
