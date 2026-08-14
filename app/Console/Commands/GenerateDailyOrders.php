@@ -327,6 +327,9 @@ class GenerateDailyOrders extends Command
         $from = $this->option('from');
         $to = $this->option('to');
 
+        // --------------------------------------------
+        // MANUAL SINGLE DATE
+        // --------------------------------------------
         if ($date && ($from || $to)) {
             $this->error('Use either --date or --from/--to, not both.');
             return [];
@@ -338,12 +341,17 @@ class GenerateDailyOrders extends Command
         }
 
         if ($date) {
-            return [Carbon::parse($date)->toDateString()];
+            return [
+                Carbon::parse($date)->toDateString()
+            ];
         }
 
+        // --------------------------------------------
+        // MANUAL DATE RANGE
+        // --------------------------------------------
         if ($from && $to) {
-            $fromDate = Carbon::parse($from);
-            $toDate = Carbon::parse($to);
+            $fromDate = Carbon::parse($from)->startOfDay();
+            $toDate = Carbon::parse($to)->startOfDay();
 
             if ($fromDate->gt($toDate)) {
                 $this->error('--from date cannot be greater than --to date.');
@@ -351,6 +359,7 @@ class GenerateDailyOrders extends Command
             }
 
             $dates = [];
+
             foreach (CarbonPeriod::create($fromDate, $toDate) as $day) {
                 $dates[] = $day->toDateString();
             }
@@ -358,7 +367,60 @@ class GenerateDailyOrders extends Command
             return $dates;
         }
 
-        return [Carbon::now('Asia/Kolkata')->toDateString()];
+        // --------------------------------------------
+        // AUTOMATIC MODE
+        //
+        // Check today + previous 7 days.
+        // If a date has no subscription orders,
+        // treat it as a missed generation date.
+        //
+        // Example:
+        // Aug 08 -> exists
+        // Aug 09 -> missing
+        // Aug 10 -> missing
+        // Aug 11 -> exists
+        //
+        // Returns: [2026-08-09, 2026-08-10, 2026-08-11]
+        //
+        // Today is ALWAYS included so today's
+        // subscriptions are rechecked safely.
+        // Existing-order protection prevents duplicates.
+        // --------------------------------------------
+
+        $today = Carbon::now('Asia/Kolkata')->startOfDay();
+
+        $lookbackDays = 7;
+
+        $startDate = $today->copy()->subDays($lookbackDays);
+
+        $existingDates = DB::table('orders')
+            ->where('order_type', 'subscription')
+            ->whereDate('delivery_date', '>=', $startDate->toDateString())
+            ->whereDate('delivery_date', '<=', $today->toDateString())
+            ->distinct()
+            ->pluck('delivery_date')
+            ->map(function ($value) {
+                return Carbon::parse($value)->toDateString();
+            })
+            ->flip();
+
+        $dates = [];
+
+        foreach (CarbonPeriod::create($startDate, $today) as $day) {
+            $dayString = $day->toDateString();
+
+            // Always process today.
+            // For previous days, process only if the
+            // entire subscription-order date is missing.
+            if (
+                $dayString === $today->toDateString() ||
+                !$existingDates->has($dayString)
+            ) {
+                $dates[] = $dayString;
+            }
+        }
+
+        return $dates;
     }
 
     protected function writeLog(string $message): void

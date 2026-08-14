@@ -470,24 +470,47 @@ class HistoricalImporterService
                 $this->cell($row, $columns['delivery_count'])
             );
 
-            $deliveryFee = $this->moneyValue(
-                $this->cell($row, $columns['delivery_fee'])
+            /*
+             * The original workbook uses named LAMBDA formulas for
+             * Delivery Fee and Current Dues. PhpSpreadsheet reads the
+             * cached values as #NAME? because Excel's named LAMBDA/UDF
+             * functions are not recalculated here.
+             *
+             * Reproduce the workbook formulas directly:
+             *
+             * DLVRY_FEE(daily_count, milk_type, delivery_count)
+             * Current Dues:
+             *   Jan-Feb => DAIRY_MRP_APR2025 prices
+             *   Mar-Jun => DAIRY_MRP_MAR2026 prices
+             */
+            $deliveryFee = $this->calculateHistoricalDeliveryFee(
+                $askQuantity,
+                $productName,
+                $sheetDeliveryCount
             );
 
             $previousDues = $this->moneyValue(
                 $this->cell($row, $columns['previous_dues'])
             );
 
-            $thisMonthDues = $this->moneyValue(
-                $this->cell($row, $columns['this_month_dues'])
+            $thisMonthDues = $this->calculateHistoricalCurrentDues(
+                $month,
+                $sheetDeliveryCount,
+                $productName
             );
 
             $payment = $this->moneyValue(
                 $this->cell($row, $columns['payment'])
             );
 
-            $closingDues = $this->moneyValue(
-                $this->cell($row, $columns['closing_dues'])
+            /*
+             * Closing due is row-level in the workbook:
+             * Delivery Fee + Current Dues + Previous Dues - Payment.
+             * Calculate it directly instead of trusting the cached #NAME?.
+             */
+            $closingDues = round(
+                $deliveryFee + $thisMonthDues + $previousDues - $payment,
+                2
             );
 
             // if ($name === 'Sreenu') {
@@ -644,6 +667,118 @@ class HistoricalImporterService
             'delivered_days' => $deliveredDays,
             'daily_quantities' => $dailyQuantities,
         ];
+    }
+
+
+    /**
+     * Reproduce workbook named formula:
+     *
+     * DLVRY_FEE(daily_count, milk_type, delivery_count)
+     * = MIN(
+     *     50 * daily_count,
+     *     multiplier(milk_type) * delivery_count
+     *   )
+     *
+     * multiplier:
+     * newspaper => 0
+     * arokya/small => 1
+     * everything else => 2
+     */
+    private function calculateHistoricalDeliveryFee(
+        float $dailyCount,
+        string $productName,
+        float $deliveryCount
+    ): float {
+        $product = strtolower(trim($productName));
+
+        if (str_contains($product, 'newspaper')) {
+            $multiplier = 0.0;
+        } elseif (
+            str_contains($product, 'arokya')
+            || str_contains($product, 'small')
+        ) {
+            $multiplier = 1.0;
+        } else {
+            $multiplier = 2.0;
+        }
+
+        return round(
+            min(
+                50.0 * max(0.0, $dailyCount),
+                $multiplier * max(0.0, $deliveryCount)
+            ),
+            2
+        );
+    }
+
+    /**
+     * Reproduce workbook Current Dues named formulas.
+     *
+     * Jan-Feb use DAIRY_MRP_APR2025.
+     * Mar-Jun use DAIRY_MRP_MAR2026.
+     */
+    private function calculateHistoricalCurrentDues(
+        string $month,
+        float $deliveryCount,
+        string $productName
+    ): float {
+        $product = strtolower(trim($productName));
+
+        $apr2025Prices = [
+            'vijaya-gold' => 36.00,
+            'vijaya-curd' => 35.00,
+            'vijaya-gold-small' => 10.00,
+            'vijaya-curd-small' => 10.00,
+            'vijaya-buttermilk-small' => 10.00,
+            'vijaya-tm' => 29.00,
+            'vijaya-tm-small' => 10.00,
+            'arokya-gold' => 40.00,
+            'arokya-tm' => 29.00,
+            'arokya-tm-small' => 10.00,
+            'hatsun-curd' => 40.00,
+            'hatsun-curd-small' => 10.00,
+            'sangam-gold' => 35.00,
+            'eenadu-newspaper' => 7.00,
+        ];
+
+        $mar2026Prices = [
+            'vijaya-gold' => 37.00,
+            'vijaya-curd' => 36.00,
+            'vijaya-gold-small' => 10.00,
+            'vijaya-curd-small' => 10.00,
+            'vijaya-buttermilk-small' => 10.00,
+            'vijaya-tm' => 30.00,
+            'vijaya-tm-small' => 10.00,
+            'arokya-gold' => 38.00,
+            'arokya-tm' => 29.00,
+            'arokya-tm-small' => 10.00,
+            'hatsun-curd' => 40.00,
+            'hatsun-curd-small' => 10.00,
+            'sangam-gold' => 35.00,
+            'eenadu-newspaper' => 7.00,
+        ];
+
+        $prices = in_array($month, ['2026-01', '2026-02'], true)
+            ? $apr2025Prices
+            : $mar2026Prices;
+
+        $price = $prices[$product] ?? null;
+
+        if ($price === null) {
+            /*
+             * Unknown product: do not silently invent a price.
+             * Keep it at zero so dry-run makes the mismatch visible.
+             */
+            return 0.0;
+        }
+
+        $amount = max(0.0, $deliveryCount) * $price;
+
+        if ($product === 'eenadu-newspaper') {
+            $amount += 5.0;
+        }
+
+        return round($amount, 2);
     }
 
     private function findHeaderRowIndex(array $rows): ?int

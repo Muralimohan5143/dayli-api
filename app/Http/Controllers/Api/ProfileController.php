@@ -451,9 +451,10 @@ class ProfileController extends Controller
         ]);
 
         $user->update([
-            'name'   => $data['name'],
-            'email'  => $data['email'] ?? null,
-            'gender' => $data['gender'] ?? null,
+            'name'         => $data['name'],
+            'display_name' => $data['name'],
+            'email'        => $data['email'] ?? null,
+            'gender'       => $data['gender'] ?? null,
         ]);
 
         return response()->json([

@@ -11,7 +11,8 @@ class InvoiceGeneratorService
         int $zoneId,
         int $subscriptionTypeId,
         string $monthStart,
-        string $monthEndExclusive
+        string $monthEndExclusive,
+        ?array $customerIds = null
     ): int {
         $invoiceDate = Carbon::parse($monthStart)->endOfMonth()->toDateString();
 
@@ -25,6 +26,10 @@ class InvoiceGeneratorService
             ->where('sst.subscription_type_id', $subscriptionTypeId)
             ->where('oi.actuals_date', '>=', $monthStart)
             ->where('oi.actuals_date', '<', $monthEndExclusive)
+            ->when(
+                !empty($customerIds),
+                fn($query) => $query->whereIn('o.customer_id', array_map('intval', $customerIds))
+            )
             ->selectRaw('
               o.customer_id as user_id,
 MIN(o.order_type) as any_order_type,

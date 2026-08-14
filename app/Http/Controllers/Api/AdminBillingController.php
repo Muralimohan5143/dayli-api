@@ -717,13 +717,68 @@ class AdminBillingController extends Controller
                 ];
             }
 
+            /*
+            |--------------------------------------------------------------------------
+            | Queue Payment Received notification
+            |--------------------------------------------------------------------------
+            |
+            | Do NOT send FCM directly from this controller.
+            |
+            | This creates an outbox event.
+            |
+            | outbox_events
+            |      ↓
+            | ops:dispatch-due
+            |      ↓
+            | PaymentReceivedNotificationHandler
+            |      ↓
+            | FcmService
+            |      ↓
+            | Customer
+            |
+            */
+
+            $creditAmount = max($remaining, 0);
+
+            DB::table('outbox_events')->insert([
+                'event_type'      => 'payment.received',
+
+                'aggregate_type'  => 'payment',
+                'aggregate_id'    => $paymentId,
+
+                // Prevent same payment notification being queued twice.
+                'idempotency_key' => 'payment.received:' . $paymentId,
+
+                'scheduled_at'    => now(),
+                'status'          => 'pending',
+                'priority'        => 5,
+                'attempts'        => 0,
+                'max_attempts'    => 10,
+
+                'payload' => json_encode([
+                    'user_id'          => $userId,
+                    'payment_id'       => $paymentId,
+                    'amount'           => round($amount, 2),
+                    'payment_date'     => $date,
+                    'method'           => $method,
+                    'allocated_amount' => round($allocatedTotal, 2),
+                    'credit_amount'    => round($creditAmount, 2),
+                    'allocations'      => $results,
+                ]),
+
+                'notify_on' => 'failure',
+
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
             return response()->json([
                 'ok'               => true,
                 'user_id'          => $userId,
                 'payment_id'       => $paymentId,
                 'received_amount'  => round($amount, 2),
                 'allocated_amount' => round($allocatedTotal, 2),
-                'credit_amount'    => round(max($remaining, 0), 2),
+                'credit_amount'    => round($creditAmount, 2),
                 'allocations'      => $results,
             ]);
         });

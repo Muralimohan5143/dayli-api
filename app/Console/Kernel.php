@@ -41,8 +41,10 @@ class Kernel extends ConsoleKernel
         }
         // ✅ Production: auto-create daily pending orders at 7:00 AM
         $schedule->command('dayli:generate-daily-orders')
-            ->dailyAt('22:30')
-            ->withoutOverlapping(60)
+            ->everyFiveMinutes()
+            ->timezone('Asia/Kolkata')
+            ->between('04:00', '23:59')
+            ->withoutOverlapping(10)
             ->runInBackground();
 
         $schedule->command('ops:dispatch-due --batch=25 --lock-ttl=30')

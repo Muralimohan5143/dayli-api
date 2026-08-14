@@ -32,6 +32,7 @@ class EventHandlerRegistry
 
             'report.invoice.send_notifications' => \App\Ops\Handlers\MonthlyInvoiceSendHandler::class,
 
+            'payment.received' => \App\Ops\Handlers\PaymentReceivedNotificationHandler::class,
 
             'zone.no_delivery.notify' => \App\Ops\Handlers\ZoneNoDeliveryNotifyHandler::class,
         ];
