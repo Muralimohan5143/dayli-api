@@ -274,7 +274,35 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/inward-payment', [AdminBillingController::class, 'storeInwardPayment']);
         Route::post('/inward-payment-auto', [AdminBillingController::class, 'storeInwardPaymentAuto']);
         Route::post('/inward-payment-allocations', [AdminBillingController::class, 'storeInwardPaymentAllocations']);
+
+        Route::get(
+            '/upi-pending-verifications',
+            [AdminBillingController::class, 'pendingUpiVerifications']
+        );
+
+        Route::post(
+            '/upi-verifications/{attemptId}/approve',
+            [AdminBillingController::class, 'approveUpiPayment']
+        );
+
+        Route::post(
+            '/upi-verifications/{attemptId}/reject',
+            [AdminBillingController::class, 'rejectUpiPayment']
+        );
     });
+
+    // ==============================
+    // CUSTOMER UPI PAYMENT
+    // ==============================
+    Route::post(
+        '/payments/upi/initiate',
+        [AdminBillingController::class, 'initiateUpiPayment']
+    );
+
+    Route::post(
+        '/payments/upi/result',
+        [AdminBillingController::class, 'submitUpiResult']
+    );
 
     Route::prefix('zone-manager')->group(function () {
         Route::get('/outbox-reports', [OutboxReportController::class, 'index']);

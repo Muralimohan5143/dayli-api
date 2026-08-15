@@ -63,5 +63,10 @@ return [
         'service_account_json' => env('FCM_SERVICE_ACCOUNT_JSON'),
     ],
 
+    'dayli_upi' => [
+        'vpa' => env('DAYLI_UPI_VPA'),
+        'name' => env('DAYLI_UPI_NAME', 'Leela'),
+    ],
+
 
 ];

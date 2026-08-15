@@ -121,9 +121,14 @@ class FcmService
                 }
             } catch (\Throwable $e) {
                 $fail++;
+
                 Log::error('FCM_SEND_EXCEPTION', [
                     'token_prefix' => substr((string)$t, 0, 25),
+                    'exception' => get_class($e),
                     'msg' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'trace' => $e->getTraceAsString(),
                 ]);
 
                 // ❌ DO NOT mark invalid here (could be timeout/etc)

@@ -34,6 +34,8 @@ class EventHandlerRegistry
 
             'payment.received' => \App\Ops\Handlers\PaymentReceivedNotificationHandler::class,
 
+            'upi.payment.verify' => \App\Ops\Handlers\UpiPaymentVerificationHandler::class,
+
             'zone.no_delivery.notify' => \App\Ops\Handlers\ZoneNoDeliveryNotifyHandler::class,
         ];
     }

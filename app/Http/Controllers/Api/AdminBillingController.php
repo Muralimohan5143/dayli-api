@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\PaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -117,28 +118,31 @@ class AdminBillingController extends Controller
 
             $isHistorical = !empty($meta['historical_import']);
 
-            if (
+            if (($latestInvoice->payment_status ?? '') === 'paid') {
+
+                // Paid invoice must never have a current payable due.
+                $due = 0;
+            } elseif (
                 $isHistorical &&
                 array_key_exists('sheet_closing_dues', $meta)
             ) {
-                // Historical sheet: closing due is the real balance
+
+                // Historical unpaid/partial invoice:
+                // sheet closing dues is the source balance.
                 $due = max(
                     0,
                     (float) $meta['sheet_closing_dues']
                 );
             } else {
-                // New generated invoices
-                if (($latestInvoice->payment_status ?? '') === 'paid') {
-                    $due = 0;
-                } else {
-                    $due = (float) ($latestInvoice->grand_total ?? 0);
 
-                    if (
-                        isset($latestInvoice->Unpaid_dues) &&
-                        (float) $latestInvoice->Unpaid_dues > 0
-                    ) {
-                        $due = (float) $latestInvoice->Unpaid_dues;
-                    }
+                // Normal generated invoice.
+                $due = (float) ($latestInvoice->grand_total ?? 0);
+
+                if (
+                    isset($latestInvoice->Unpaid_dues) &&
+                    (float) $latestInvoice->Unpaid_dues > 0
+                ) {
+                    $due = (float) $latestInvoice->Unpaid_dues;
                 }
             }
 
@@ -565,8 +569,10 @@ class AdminBillingController extends Controller
      *   ]
      * }
      */
-    public function storeInwardPaymentAllocations(Request $request)
-    {
+    public function storeInwardPaymentAllocations(
+        Request $request,
+        PaymentService $paymentService
+    ) {
         $userId = (int) $request->input('user_id');
         $amount = (float) $request->input('amount');
         $date   = (string) $request->input('payment_date');
@@ -576,210 +582,600 @@ class AdminBillingController extends Controller
         $allocs = $request->input('allocations');
 
         if ($userId <= 0) {
-            return response()->json(['message' => 'user_id required'], 422);
+            return response()->json([
+                'message' => 'user_id required',
+            ], 422);
         }
 
         if ($amount <= 0) {
-            return response()->json(['message' => 'amount must be > 0'], 422);
+            return response()->json([
+                'message' => 'amount must be > 0',
+            ], 422);
         }
 
         if ($date === '') {
-            return response()->json(['message' => 'payment_date required'], 422);
+            return response()->json([
+                'message' => 'payment_date required',
+            ], 422);
         }
 
         if (!is_array($allocs) || count($allocs) === 0) {
-            return response()->json(['message' => 'allocations required'], 422);
+            return response()->json([
+                'message' => 'allocations required',
+            ], 422);
+        }
+
+        $result = $paymentService->recordAndAllocate(
+            userId: $userId,
+            amount: $amount,
+            date: $date,
+            method: $method,
+            allocations: $allocs,
+            note: $note !== '' ? $note : null,
+            createdBy: optional($request->user())->id,
+            referenceNo: null,
+            source: 'invoice_allocation'
+        );
+
+        return response()->json($result);
+    }
+    public function initiateUpiPayment(Request $request)
+    {
+        $request->validate([
+            'invoice_id' => 'required|integer',
+        ]);
+
+        $user = $request->user();
+        $invoiceId = (int) $request->input('invoice_id');
+
+        $invoice = DB::table('invoices')
+            ->where('id', $invoiceId)
+            ->whereNull('deleted_at')
+            ->first();
+
+        if (!$invoice) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Invoice not found',
+            ], 404);
+        }
+
+        if ((int) ($invoice->user_id ?? 0) !== (int) $user->id) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Invoice does not belong to this user',
+            ], 403);
+        }
+
+        $meta = json_decode($invoice->meta ?? '{}', true);
+
+        if (!empty($meta['historical_import'])) {
+            // Historical Jan-Jun invoice
+            if (($invoice->payment_status ?? '') === 'paid') {
+                $due = 0.0;
+            } else {
+                $due = max(
+                    0,
+                    round(
+                        (float) ($meta['sheet_closing_dues'] ?? 0),
+                        2
+                    )
+                );
+            }
+        } else {
+            // July onwards generated invoice
+            $due = max(
+                0,
+                round(
+                    (float) ($invoice->Unpaid_dues ?? 0),
+                    2
+                )
+            );
+        }
+
+        if ($due <= 0) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Invoice already settled',
+            ], 422);
+        }
+
+        $reference = 'DAYLI-' . $invoiceId . '-' . now()->format('YmdHis') . '-' . random_int(1000, 9999);
+
+        $attemptId = DB::table('upi_payment_attempts')->insertGetId([
+            'user_id' => $user->id,
+            'invoice_id' => $invoiceId,
+            'amount' => round($due, 2),
+            'payment_reference' => $reference,
+            'status' => 'initiated',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $vpa = config('services.dayli_upi.vpa');
+        $name = config('services.dayli_upi.name', 'Leela');
+
+        $upiUri = 'upi://pay?' . http_build_query([
+            'pa' => $vpa,
+            'pn' => $name,
+            'tr' => $reference,
+            'tn' => 'Dayli Invoice ' . ($invoice->invoice_number ?? $invoiceId),
+            'am' => number_format($due, 2, '.', ''),
+            'cu' => 'INR',
+        ]);
+
+        return response()->json([
+            'ok' => true,
+            'attempt_id' => $attemptId,
+            'invoice_id' => $invoiceId,
+            'amount' => round($due, 2),
+            'payment_reference' => $reference,
+            'upi_uri' => $upiUri,
+        ]);
+    }
+    public function submitUpiResult(Request $request)
+    {
+        $request->validate([
+            'attempt_id'   => 'required|integer',
+            'result_code'  => 'nullable|integer',
+            'upi_response' => 'required|string',
+        ]);
+
+        $user = $request->user();
+
+        $attemptId = (int) $request->input('attempt_id');
+        $resultCode = $request->input('result_code');
+        $rawResponse = trim((string) $request->input('upi_response'));
+
+        $attempt = DB::table('upi_payment_attempts')
+            ->where('id', $attemptId)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (!$attempt) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Payment attempt not found',
+            ], 404);
+        }
+
+        // Already processed / already queued.
+        if (
+            in_array(
+                $attempt->status,
+                ['successful', 'failed', 'cancelled'],
+                true
+            )
+        ) {
+            return response()->json([
+                'ok' => true,
+                'status' => $attempt->status,
+                'message' => 'Payment attempt already processed',
+            ]);
+        }
+
+        /*
+     * Typical UPI response:
+     *
+     * txnId=xxx&
+     * txnRef=DAYLI-...&
+     * Status=SUCCESS&
+     * responseCode=00
+     */
+        parse_str($rawResponse, $parts);
+
+        $upiStatus = strtoupper(
+            trim(
+                (string) (
+                    $parts['Status']
+                    ?? $parts['status']
+                    ?? ''
+                )
+            )
+        );
+
+        $txnId = trim(
+            (string) (
+                $parts['txnId']
+                ?? $parts['txnid']
+                ?? ''
+            )
+        );
+
+        $txnRef = trim(
+            (string) (
+                $parts['txnRef']
+                ?? $parts['txnref']
+                ?? ''
+            )
+        );
+
+        $responseCode = trim(
+            (string) (
+                $parts['responseCode']
+                ?? $parts['responsecode']
+                ?? ''
+            )
+        );
+
+        /*
+     * Do NOT allocate here.
+     *
+     * Client SUCCESS only means:
+     * "please verify this transaction".
+     */
+        if ($upiStatus !== 'SUCCESS') {
+            return response()->json([
+                'ok' => false,
+                'message' => 'UPI payment is not reported as successful',
+                'upi_status' => $upiStatus,
+            ], 422);
+        }
+
+        /*
+     * Returned transaction reference must match
+     * the reference generated by Dayli.
+     */
+        if (
+            $txnRef !== '' &&
+            $txnRef !== $attempt->payment_reference
+        ) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Payment reference mismatch',
+            ], 422);
         }
 
         return DB::transaction(function () use (
-            $userId,
-            $amount,
-            $date,
-            $method,
-            $note,
-            $allocs,
-            $request
+            $attempt,
+            $attemptId,
+            $rawResponse,
+            $txnId,
+            $responseCode,
+            $resultCode
         ) {
+            DB::table('upi_payment_attempts')
+                ->where('id', $attemptId)
+                ->update([
+                    'upi_transaction_id' => ($txnId !== '' && strtolower($txnId) !== 'null')
+                        ? $txnId
+                        : null,
 
-            // 1. Store FULL amount actually received from customer.
-            $paymentId = DB::table('payments')->insertGetId([
-                'party_type'   => 'customer',
-                'party_id'     => $userId,
-                'direction'    => 'in',
-                'received_at'  => $date . ' 00:00:00',
-                'method'       => $method,
-                'reference_no' => null,
-                'amount'       => $amount,
-                'status'       => 'posted',
-                'created_by'   => optional($request->user())->id,
-                'meta'         => json_encode([
-                    'source' => 'invoice_allocation',
-                ]),
-                'created_at'   => now(),
-                'updated_at'   => now(),
-            ]);
+                    'response_code' =>
+                    $responseCode !== ''
+                        ? $responseCode
+                        : null,
 
-            $remaining = $amount;
-            $allocatedTotal = 0.0;
-            $results = [];
+                    // Waiting for server-side verification.
+                    'status' => 'pending',
 
-            foreach ($allocs as $row) {
-                if ($remaining <= 0) {
-                    break;
-                }
+                    'raw_response' => $rawResponse,
 
-                $invoiceId = (int) ($row['invoice_id'] ?? 0);
-                $wantPay   = (float) ($row['amount'] ?? 0);
-
-                if ($invoiceId <= 0 || $wantPay <= 0) {
-                    continue;
-                }
-
-                $inv = DB::table('invoices')
-                    ->where('id', $invoiceId)
-                    ->whereNull('deleted_at')
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$inv) {
-                    continue;
-                }
-
-                // Invoice must belong to selected customer.
-                if ((int) ($inv->user_id ?? 0) !== $userId) {
-                    continue;
-                }
-
-                $grand = (float) ($inv->grand_total ?? 0);
-                $due   = (float) ($inv->Unpaid_dues ?? 0);
-
-                if ($grand <= 0 || $due <= 0) {
-                    continue;
-                }
-
-                // Never allocate more than invoice due.
-                $payNow = min($wantPay, $remaining, $due);
-
-                if ($payNow <= 0) {
-                    continue;
-                }
-
-                $newDue = max($due - $payNow, 0);
-
-                if ($newDue <= 0.0001) {
-                    $status = 'paid';
-                } elseif ($newDue < $grand) {
-                    $status = 'partial';
-                } else {
-                    $status = 'unpaid';
-                }
-
-                // 2. Link this receipt to this invoice.
-                DB::table('payment_allocations')->insert([
-                    'payment_id'          => $paymentId,
-                    'inward_payment_id'   => null,
-                    'invoice_id'          => $invoiceId,
-                    'allocatable_type'    => 'invoice',
-                    'allocatable_id'      => $invoiceId,
-                    'amount_applied'      => $payNow,
-                    'allocated_amount'    => $payNow,
-                    'is_final_allocation' => $newDue <= 0.0001 ? 1 : 0,
-                    'note'                => $note !== '' ? $note : null,
-                    'created_at'          => now(),
-                    'updated_at'          => now(),
+                    'updated_at' => now(),
                 ]);
 
-                // 3. Update invoice balance.
-                $invoiceUpdate = [
-                    'Unpaid_dues'    => $newDue,
-                    'payment_status' => $status,
-                    'updated_at'     => now(),
+            /*
+         * Prevent duplicate verification events.
+         */
+            $idempotencyKey =
+                'upi.payment.verify:' . $attemptId;
+
+            $alreadyQueued = DB::table('outbox_events')
+                ->where(
+                    'idempotency_key',
+                    $idempotencyKey
+                )
+                ->exists();
+
+            if (!$alreadyQueued) {
+                DB::table('outbox_events')->insert([
+                    'event_type' =>
+                    'upi.payment.verify',
+
+                    'aggregate_type' =>
+                    'upi_payment_attempt',
+
+                    'aggregate_id' =>
+                    $attemptId,
+
+                    'idempotency_key' =>
+                    $idempotencyKey,
+
+                    'payload' => json_encode([
+                        'attempt_id' =>
+                        $attemptId,
+
+                        'user_id' =>
+                        (int) $attempt->user_id,
+
+                        'invoice_id' =>
+                        (int) $attempt->invoice_id,
+
+                        'amount' =>
+                        round(
+                            (float) $attempt->amount,
+                            2
+                        ),
+
+                        'payment_reference' =>
+                        $attempt->payment_reference,
+
+                        'upi_transaction_id' => ($txnId !== '' &&
+                            strtolower($txnId) !== 'null')
+                            ? $txnId
+                            : null,
+
+                        'response_code' =>
+                        $responseCode,
+
+                        'result_code' =>
+                        $resultCode,
+
+                        'raw_response' =>
+                        $rawResponse,
+                    ]),
+
+                    'status' => 'pending',
+                    'priority' => 5,
+                    'attempts' => 0,
+                    'max_attempts' => 10,
+                    'scheduled_at' => now(),
+                    'notify_on' => 'failure',
+
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            return response()->json([
+                'ok' => true,
+                'status' => 'pending_verification',
+                'message' =>
+                'Payment submitted for verification',
+            ]);
+        });
+    }
+    public function pendingUpiVerifications(Request $request)
+    {
+        $rows = DB::table('upi_payment_attempts as a')
+            ->join('users as u', 'u.id', '=', 'a.user_id')
+            ->join('invoices as i', 'i.id', '=', 'a.invoice_id')
+            ->select([
+                'a.id as attempt_id',
+                'a.user_id',
+                'a.invoice_id',
+                'a.amount',
+                'a.payment_reference',
+                'a.upi_transaction_id',
+                'a.response_code',
+                'a.status',
+                'a.raw_response',
+                'a.created_at',
+                'a.updated_at',
+
+                'i.invoice_number',
+                'i.invoice_date',
+                'i.Unpaid_dues',
+                'i.payment_status',
+
+                DB::raw(
+                    'COALESCE(u.display_name, u.name, "") as customer_name'
+                ),
+
+                'u.phone',
+            ])
+            ->where('a.status', 'pending')
+            ->whereNull('i.deleted_at')
+            ->orderBy('a.created_at', 'asc')
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'attempt_id' => (int) $row->attempt_id,
+                    'user_id' => (int) $row->user_id,
+                    'customer_name' => (string) $row->customer_name,
+                    'phone' => (string) ($row->phone ?? ''),
+
+                    'invoice_id' => (int) $row->invoice_id,
+                    'invoice_number' => (string) ($row->invoice_number ?? ''),
+                    'invoice_date' => (string) ($row->invoice_date ?? ''),
+
+                    'amount' => round((float) $row->amount, 2),
+
+                    'payment_reference' =>
+                    (string) $row->payment_reference,
+
+                    'upi_transaction_id' =>
+                    $row->upi_transaction_id
+                        ? (string) $row->upi_transaction_id
+                        : null,
+
+                    'response_code' =>
+                    $row->response_code !== null
+                        ? (string) $row->response_code
+                        : null,
+
+                    'status' => (string) $row->status,
+
+                    'invoice_due' =>
+                    round((float) ($row->Unpaid_dues ?? 0), 2),
+
+                    'invoice_payment_status' =>
+                    (string) ($row->payment_status ?? ''),
+
+                    'submitted_at' =>
+                    (string) ($row->updated_at ?? $row->created_at),
                 ];
+            });
 
-                if ($status === 'paid') {
-                    $invoiceUpdate['status'] = 'paid';
-                }
+        return response()->json([
+            'ok' => true,
+            'count' => $rows->count(),
+            'data' => $rows->values(),
+        ]);
+    }
 
-                DB::table('invoices')
-                    ->where('id', $invoiceId)
-                    ->update($invoiceUpdate);
+    public function approveUpiPayment(
+        Request $request,
+        int $attemptId,
+        PaymentService $paymentService
+    ) {
+        $request->validate([
+            'note' => 'nullable|string|max:500',
+        ]);
 
-                $allocatedTotal += $payNow;
-                $remaining -= $payNow;
+        $reviewer = $request->user();
 
-                $results[] = [
-                    'payment_id'     => $paymentId,
-                    'invoice_id'     => $invoiceId,
-                    'paid'           => $payNow,
-                    'old_due'        => $due,
-                    'new_due'        => $newDue,
-                    'payment_status' => $status,
-                ];
+        return DB::transaction(function () use (
+            $attemptId,
+            $paymentService,
+            $reviewer,
+            $request
+        ) {
+            $attempt = DB::table('upi_payment_attempts')
+                ->where('id', $attemptId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$attempt) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Payment attempt not found',
+                ], 404);
+            }
+
+            // Prevent double approval / duplicate allocation.
+            if ($attempt->status === 'successful') {
+                return response()->json([
+                    'ok' => true,
+                    'message' => 'Payment already verified',
+                    'payment_id' => $attempt->payment_id,
+                ]);
+            }
+
+            if ($attempt->status !== 'pending') {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Only pending payments can be approved',
+                ], 422);
+            }
+
+            $invoice = DB::table('invoices')
+                ->where('id', $attempt->invoice_id)
+                ->whereNull('deleted_at')
+                ->lockForUpdate()
+                ->first();
+
+            if (!$invoice) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Invoice not found',
+                ], 404);
+            }
+
+            if ((int) $invoice->user_id !== (int) $attempt->user_id) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Invoice/customer mismatch',
+                ], 422);
             }
 
             /*
-            |--------------------------------------------------------------------------
-            | Queue Payment Received notification
-            |--------------------------------------------------------------------------
-            |
-            | Do NOT send FCM directly from this controller.
-            |
-            | This creates an outbox event.
-            |
-            | outbox_events
-            |      ↓
-            | ops:dispatch-due
-            |      ↓
-            | PaymentReceivedNotificationHandler
-            |      ↓
-            | FcmService
-            |      ↓
-            | Customer
-            |
-            */
+         * Zone Manager has manually checked the real PhonePe /
+         * bank transaction and approved it.
+         *
+         * Now use the common PaymentService.
+         */
+            $result = $paymentService->recordAndAllocate(
+                userId: (int) $attempt->user_id,
+                amount: (float) $attempt->amount,
+                date: now()->toDateString(),
+                method: 'upi',
+                allocations: [
+                    [
+                        'invoice_id' => (int) $attempt->invoice_id,
+                        'amount' => (float) $attempt->amount,
+                    ],
+                ],
+                note: $request->input('note')
+                    ?: 'UPI manually verified by Zone Manager',
+                createdBy: $reviewer?->id,
+                referenceNo: $attempt->upi_transaction_id
+                    ?: $attempt->payment_reference,
+                source: 'upi_manual_verification'
+            );
 
-            $creditAmount = max($remaining, 0);
+            $paymentId = (int) ($result['payment_id'] ?? 0);
 
-            DB::table('outbox_events')->insert([
-                'event_type'      => 'payment.received',
+            if ($paymentId <= 0) {
+                throw new \RuntimeException(
+                    'Payment allocation did not create a payment record'
+                );
+            }
 
-                'aggregate_type'  => 'payment',
-                'aggregate_id'    => $paymentId,
-
-                // Prevent same payment notification being queued twice.
-                'idempotency_key' => 'payment.received:' . $paymentId,
-
-                'scheduled_at'    => now(),
-                'status'          => 'pending',
-                'priority'        => 5,
-                'attempts'        => 0,
-                'max_attempts'    => 10,
-
-                'payload' => json_encode([
-                    'user_id'          => $userId,
-                    'payment_id'       => $paymentId,
-                    'amount'           => round($amount, 2),
-                    'payment_date'     => $date,
-                    'method'           => $method,
-                    'allocated_amount' => round($allocatedTotal, 2),
-                    'credit_amount'    => round($creditAmount, 2),
-                    'allocations'      => $results,
-                ]),
-
-                'notify_on' => 'failure',
-
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+            DB::table('upi_payment_attempts')
+                ->where('id', $attemptId)
+                ->update([
+                    'status' => 'successful',
+                    'payment_id' => $paymentId,
+                    'completed_at' => now(),
+                    'updated_at' => now(),
+                ]);
 
             return response()->json([
-                'ok'               => true,
-                'user_id'          => $userId,
-                'payment_id'       => $paymentId,
-                'received_amount'  => round($amount, 2),
-                'allocated_amount' => round($allocatedTotal, 2),
-                'credit_amount'    => round($creditAmount, 2),
-                'allocations'      => $results,
+                'ok' => true,
+                'message' => 'Payment verified and allocated successfully',
+                'attempt_id' => $attemptId,
+                'payment_id' => $paymentId,
+                'allocation' => $result,
+            ]);
+        });
+    }
+
+    public function rejectUpiPayment(Request $request, int $attemptId)
+    {
+        $request->validate([
+            'note' => 'nullable|string|max:500',
+        ]);
+
+        return DB::transaction(function () use ($attemptId) {
+            $attempt = DB::table('upi_payment_attempts')
+                ->where('id', $attemptId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$attempt) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Payment attempt not found',
+                ], 404);
+            }
+
+            if ($attempt->status === 'successful') {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Successful payment cannot be rejected',
+                ], 422);
+            }
+
+            if ($attempt->status !== 'pending') {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Only pending payments can be rejected',
+                ], 422);
+            }
+
+            DB::table('upi_payment_attempts')
+                ->where('id', $attemptId)
+                ->update([
+                    'status' => 'failed',
+                    'completed_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+            return response()->json([
+                'ok' => true,
+                'message' => 'Payment verification rejected',
+                'attempt_id' => $attemptId,
             ]);
         });
     }

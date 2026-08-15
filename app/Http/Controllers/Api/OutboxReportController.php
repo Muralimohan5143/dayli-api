@@ -486,27 +486,29 @@ class OutboxReportController extends Controller
                 if (!empty($meta['historical_import'])) {
                     // Historical Jan-Jun invoices
 
-                    // Opening / previous due for that month
                     $row->previous_due = round(
-                        (float) ($row->Unpaid_dues ?? 0),
+                        (float) ($meta['sheet_previous_dues'] ?? 0),
                         2
                     );
 
-                    // Actual amount paid from historical Excel
                     $row->paid_amount = round(
                         (float) ($meta['sheet_amount_paid'] ?? 0),
                         2
                     );
 
-                    // Closing due after payment
-                    // Example June Sreenu: 1261 - 1058 = 203
-                    $row->current_due = max(
-                        0,
-                        round(
-                            (float) ($row->grand_total ?? 0) - $row->paid_amount,
-                            2
-                        )
-                    );
+                    // If later carry-forward payment settled this invoice,
+                    // current due must be zero.
+                    if (($row->payment_status ?? '') === 'paid') {
+                        $row->current_due = 0.0;
+                    } else {
+                        $row->current_due = max(
+                            0,
+                            round(
+                                (float) ($meta['sheet_closing_dues'] ?? 0),
+                                2
+                            )
+                        );
+                    }
                 } else {
                     // New invoices - July onwards
 
