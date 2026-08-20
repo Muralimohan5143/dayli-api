@@ -1496,6 +1496,129 @@ END as title
             ]);
         });
     }
+
+    public function myDeliveries(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'message' => 'Unauthenticated',
+                'data' => [],
+            ], 401);
+        }
+
+        $orders = Order::query()
+            ->with([
+                'items' => function ($query) {
+                    $query
+                        ->select(
+                            'id',
+                            'order_id',
+                            'product_id',
+                            'variant_id',
+                            'title',
+                            'variant',
+                            'image_url',
+                            'quantity',
+                            'unit_price',
+                            'line_total',
+                            'actuals_date',
+                            'meta'
+                        )
+                        ->orderBy('id');
+                },
+            ])
+
+            // logged-in customer only
+            ->where('customer_id', $user->id)
+
+            // only delivery-based subscription orders
+            ->whereNotNull('delivery_date')
+
+            ->where(function ($query) {
+                $query
+                    ->where('order_type', 'subscription')
+                    ->orWhereNotNull('draft_order_id');
+            })
+
+            // don't show cancelled orders as deliveries
+            ->where(function ($query) {
+                $query
+                    ->whereNull('status')
+                    ->orWhere('status', '!=', 'cancelled');
+            })
+
+            ->orderByDesc('delivery_date')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function ($order) {
+
+                $items = $order->items->map(function ($item) {
+
+                    $meta = is_array($item->meta)
+                        ? $item->meta
+                        : [];
+
+                    $skipped =
+                        ($meta['skipped'] ?? false) === true
+                        || (int) ($item->quantity ?? 0) <= 0;
+
+                    return [
+                        'order_item_id' => (int) $item->id,
+
+                        'product_id' => $item->product_id
+                            ? (int) $item->product_id
+                            : null,
+
+                        'variant_id' => $item->variant_id
+                            ? (int) $item->variant_id
+                            : null,
+
+                        'title' => $item->title ?? 'Item',
+                        'variant' => $item->variant ?? '',
+                        'image_url' => $item->image_url ?? '',
+
+                        'quantity' => (float) ($item->quantity ?? 0),
+
+                        'unit_price' => (float) ($item->unit_price ?? 0),
+                        'line_total' => (float) ($item->line_total ?? 0),
+
+                        'actuals_date' => $item->actuals_date
+                            ? Carbon::parse($item->actuals_date)->toDateString()
+                            : null,
+
+                        'skipped' => $skipped,
+                    ];
+                })->values();
+
+                return [
+                    'order_id' => (int) $order->id,
+
+                    'delivery_date' => $order->delivery_date
+                        ? Carbon::parse($order->delivery_date)->toDateString()
+                        : null,
+
+                    'delivery_status' =>
+                    $order->delivery_status ?? 'pending',
+
+                    'delivered_at' => $order->delivered_at
+                        ? Carbon::parse($order->delivered_at)->toDateTimeString()
+                        : null,
+
+                    'delivered_by' => $order->delivered_by
+                        ? (int) $order->delivered_by
+                        : null,
+
+                    'items' => $items,
+                ];
+            });
+
+        return response()->json([
+            'ok' => true,
+            'data' => $orders,
+        ]);
+    }
     public function notifications(Request $request)
     {
         $user = $request->user();

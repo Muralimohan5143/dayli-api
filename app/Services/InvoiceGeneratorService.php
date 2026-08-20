@@ -104,6 +104,30 @@ oi.product_id as product_id,
                 $subscriptionTypeId,
                 $uid
             );
+            $existingInvoice = DB::table('invoices')
+                ->where('number', $invNumber)
+                ->first();
+
+            $alreadyPaid = 0.0;
+
+            if ($existingInvoice) {
+                $alreadyPaid = (float) DB::table('payment_allocations')
+                    ->where('invoice_id', $existingInvoice->id)
+                    ->sum('amount_applied');
+            }
+
+            $remainingDue = max(
+                round($grandTotal - $alreadyPaid, 2),
+                0
+            );
+
+            if ($remainingDue <= 0.0001) {
+                $paymentStatus = 'paid';
+            } elseif ($alreadyPaid > 0) {
+                $paymentStatus = 'partial';
+            } else {
+                $paymentStatus = 'unpaid';
+            }
 
             $data = [
                 'order_type' => $payload['order_type'],
@@ -112,11 +136,11 @@ oi.product_id as product_id,
                 'user_id' => $uid,
                 'billing_name' => $billingName ?: 'Customer',
                 'invoice_date' => $invoiceDate,
-                'status' => 'issued',
-                'payment_status' => 'unpaid',
+                'status' => $paymentStatus === 'paid' ? 'paid' : 'issued',
+                'payment_status' => $paymentStatus,
                 'gst_status' => 'unfiled',
                 'subtotal' => round($subtotal, 2),
-                'Unpaid_dues' => $grandTotal,
+                'Unpaid_dues' => $remainingDue,
                 'tax' => 0,
                 'tax_total' => 0,
                 'discount' => 0,

@@ -239,6 +239,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Orders
     // --------------------------
     Route::get('/my-orders', [MyOrdersController::class, 'index']);
+    Route::get('/my-deliveries', [MeController::class, 'myDeliveries']);
     Route::get('/orders/{id}', [OrderApiController::class, 'show']); // protected only
 
     // --------------------------

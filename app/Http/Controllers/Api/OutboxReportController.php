@@ -517,19 +517,33 @@ class OutboxReportController extends Controller
                         2
                     );
 
-                    // Actual amount allocated from new payments ledger
-                    $row->paid_amount = round(
+                    // Total payment actually allocated to this invoice
+                    $paidAmount = round(
                         (float) DB::table('payment_allocations')
                             ->where('invoice_id', $row->id)
                             ->sum('amount_applied'),
                         2
                     );
 
-                    // New invoices already maintain live remaining balance here
+                    $row->paid_amount = $paidAmount;
+
+                    // Current Due = Total Amount - Amount Paid
                     $row->current_due = max(
                         0,
-                        round((float) ($row->Unpaid_dues ?? 0), 2)
+                        round(
+                            (float) ($row->grand_total ?? 0) - $paidAmount,
+                            2
+                        )
                     );
+
+                    // Display correct payment status
+                    if ($row->current_due <= 0.0001) {
+                        $row->payment_status = 'paid';
+                    } elseif ($paidAmount > 0) {
+                        $row->payment_status = 'partial';
+                    } else {
+                        $row->payment_status = 'unpaid';
+                    }
                 }
 
                 unset($row->meta);
